@@ -30,7 +30,8 @@ public:
   const MCExpr* getExprForFDESymbol(const MCSymbol *Sym,
                                     unsigned Encoding,
                                     MCStreamer &Streamer) const override;
-
+  /*[S64fx]*/
+  void setExceptionsTypeNone();
 };
 
 } // namespace llvm

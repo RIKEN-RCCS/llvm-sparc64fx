@@ -11,6 +11,11 @@
 //  Declarations that describe the Sparc register file
 //===----------------------------------------------------------------------===//
 
+// [S64fx] NOTE: Dwarf regnums are dummy for S64fx registers.  Note
+// also regnums are assigned differently for V8 and V9 in GDB, but it
+// is not reflected.  Dwarf regnums of the extended registers be 138
+// and larger (See GDB source "gdb/sparc64-tdep.h").
+
 class SparcReg<bits<16> Enc, string n> : Register<n> {
   let HWEncoding = Enc;
   let Namespace = "SP";
@@ -26,6 +31,8 @@ def sub_even : SubRegIndex<32>;
 def sub_odd  : SubRegIndex<32, 32>;
 def sub_even64 : SubRegIndex<64>;
 def sub_odd64  : SubRegIndex<64, 64>;
+def subreg_v0 : SubRegIndex<64>;
+def subreg_v1  : SubRegIndex<64, 64>;
 }
 
 // Registers are identified with 5-bit ID numbers.
@@ -133,6 +140,12 @@ def G4 : Ri< 4, "G4">, DwarfRegNum<[4]>;
 def G5 : Ri< 5, "G5">, DwarfRegNum<[5]>;
 def G6 : Ri< 6, "G6">, DwarfRegNum<[6]>;
 def G7 : Ri< 7, "G7">, DwarfRegNum<[7]>;
+
+// [S64fx] S64fx adds 32 integer registers XG0-XG31 (64 in total).
+
+foreach I = 0-31 in
+  def XG#I : Ri<!add(I,32), "XG"#I>, DwarfRegNum<[!add(I,138)]>;
+
 def O0 : Ri< 8, "O0">, DwarfRegNum<[8]>;
 def O1 : Ri< 9, "O1">, DwarfRegNum<[9]>;
 def O2 : Ri<10, "O2">, DwarfRegNum<[10]>;
@@ -193,22 +206,22 @@ def F30 : Rf<30, "F30">, DwarfRegNum<[62]>;
 def F31 : Rf<31, "F31">, DwarfRegNum<[63]>;
 
 // Aliases of the F* registers used to hold 64-bit fp values (doubles)
-def D0  : Rd< 0,  "F0", [F0,   F1]>, DwarfRegNum<[72]>;
-def D1  : Rd< 2,  "F2", [F2,   F3]>, DwarfRegNum<[73]>;
-def D2  : Rd< 4,  "F4", [F4,   F5]>, DwarfRegNum<[74]>;
-def D3  : Rd< 6,  "F6", [F6,   F7]>, DwarfRegNum<[75]>;
-def D4  : Rd< 8,  "F8", [F8,   F9]>, DwarfRegNum<[76]>;
-def D5  : Rd<10, "F10", [F10, F11]>, DwarfRegNum<[77]>;
-def D6  : Rd<12, "F12", [F12, F13]>, DwarfRegNum<[78]>;
-def D7  : Rd<14, "F14", [F14, F15]>, DwarfRegNum<[79]>;
-def D8  : Rd<16, "F16", [F16, F17]>, DwarfRegNum<[80]>;
-def D9  : Rd<18, "F18", [F18, F19]>, DwarfRegNum<[81]>;
-def D10 : Rd<20, "F20", [F20, F21]>, DwarfRegNum<[82]>;
-def D11 : Rd<22, "F22", [F22, F23]>, DwarfRegNum<[83]>;
-def D12 : Rd<24, "F24", [F24, F25]>, DwarfRegNum<[84]>;
-def D13 : Rd<26, "F26", [F26, F27]>, DwarfRegNum<[85]>;
-def D14 : Rd<28, "F28", [F28, F29]>, DwarfRegNum<[86]>;
-def D15 : Rd<30, "F30", [F30, F31]>, DwarfRegNum<[87]>;
+//def D0  : Rd< 0,  "F0", [F0,   F1]>, DwarfRegNum<[72]>;
+//def D1  : Rd< 2,  "F2", [F2,   F3]>, DwarfRegNum<[73]>;
+//def D2  : Rd< 4,  "F4", [F4,   F5]>, DwarfRegNum<[74]>;
+//def D3  : Rd< 6,  "F6", [F6,   F7]>, DwarfRegNum<[75]>;
+//def D4  : Rd< 8,  "F8", [F8,   F9]>, DwarfRegNum<[76]>;
+//def D5  : Rd<10, "F10", [F10, F11]>, DwarfRegNum<[77]>;
+//def D6  : Rd<12, "F12", [F12, F13]>, DwarfRegNum<[78]>;
+//def D7  : Rd<14, "F14", [F14, F15]>, DwarfRegNum<[79]>;
+//def D8  : Rd<16, "F16", [F16, F17]>, DwarfRegNum<[80]>;
+//def D9  : Rd<18, "F18", [F18, F19]>, DwarfRegNum<[81]>;
+//def D10 : Rd<20, "F20", [F20, F21]>, DwarfRegNum<[82]>;
+//def D11 : Rd<22, "F22", [F22, F23]>, DwarfRegNum<[83]>;
+//def D12 : Rd<24, "F24", [F24, F25]>, DwarfRegNum<[84]>;
+//def D13 : Rd<26, "F26", [F26, F27]>, DwarfRegNum<[85]>;
+//def D14 : Rd<28, "F28", [F28, F29]>, DwarfRegNum<[86]>;
+//def D15 : Rd<30, "F30", [F30, F31]>, DwarfRegNum<[87]>;
 
 // Co-processor registers
 def C0 : Ri< 0, "C0">;
@@ -246,22 +259,71 @@ def C31 : Ri< 31, "C31">;
 
 // Unaliased double precision floating point registers.
 // FIXME: Define DwarfRegNum for these registers.
-def D16 : SparcReg< 1, "F32">;
-def D17 : SparcReg< 3, "F34">;
-def D18 : SparcReg< 5, "F36">;
-def D19 : SparcReg< 7, "F38">;
-def D20 : SparcReg< 9, "F40">;
-def D21 : SparcReg<11, "F42">;
-def D22 : SparcReg<13, "F44">;
-def D23 : SparcReg<15, "F46">;
-def D24 : SparcReg<17, "F48">;
-def D25 : SparcReg<19, "F50">;
-def D26 : SparcReg<21, "F52">;
-def D27 : SparcReg<23, "F54">;
-def D28 : SparcReg<25, "F56">;
-def D29 : SparcReg<27, "F58">;
-def D30 : SparcReg<29, "F60">;
-def D31 : SparcReg<31, "F62">;
+//def D16 : SparcReg< 1, "F32">;
+//def D17 : SparcReg< 3, "F34">;
+//def D18 : SparcReg< 5, "F36">;
+//def D19 : SparcReg< 7, "F38">;
+//def D20 : SparcReg< 9, "F40">;
+//def D21 : SparcReg<11, "F42">;
+//def D22 : SparcReg<13, "F44">;
+//def D23 : SparcReg<15, "F46">;
+//def D24 : SparcReg<17, "F48">;
+//def D25 : SparcReg<19, "F50">;
+//def D26 : SparcReg<21, "F52">;
+//def D27 : SparcReg<23, "F54">;
+//def D28 : SparcReg<25, "F56">;
+//def D29 : SparcReg<27, "F58">;
+//def D30 : SparcReg<29, "F60">;
+//def D31 : SparcReg<31, "F62">;
+
+// [S64fx] The encodings of the register numbers are shuffled.  Note
+// the use of !add for !or in the register number encoding (!or
+// operator is not in LLVM 3.x).
+
+class Xf<bits<16> i, string n, list<Register> subregs>
+  : SparcReg<!add(!and(i,224),!add(!and(!shl(i,1),31),!and(!srl(i,4),1))), n> {
+  let SubRegs = subregs;
+  let SubRegIndices = [];
+  let CoveredBySubRegs = 0;
+}
+
+class Xd<bits<16> i, string n, list<Register> subregs>
+  : SparcReg<!add(!and(i,224),!add(!and(!shl(i,1),31),!and(!srl(i,4),1))), n> {
+  let SubRegs = subregs;
+  let SubRegIndices = [sub_even];
+  let CoveredBySubRegs = 1;
+}
+
+// [S64fx] Extended FP registers (D0-D255, Fd0-Fd255).  S64fx has 256
+// in total floating-point registers.
+
+// [S64fx] S64fx extensions use the differnt layout for the
+// single-precision FP registers from the packed layout of the V9
+// registers.  They are aligned to the double-precision registers and
+// are subregsiters in a straightforward way.  Fd0-15 are aliases of
+// even numbered F0-F30 V9 registers.  Fd16-Fd31 are new without
+// corresponding V9 registers, and they are subregisters of D16-31.
+
+// [S64fx] Fd0-Fd31 are the low numbered single-precision FP registers
+// aligned with D0-D31 used by the S64fx extended instructions.
+// Fd0-Fd15 are aliases of F0-F30 even numbered V9 registers.
+
+foreach I = 0-15 in
+  def Fd#I : Rd<I, "F"#!shl(I,1),
+                [!cast<SparcReg>("F"#!shl(I,1)),
+                 !cast<SparcReg>("F"#!add(!shl(I,1),1))]>;
+foreach I = 16-31 in
+  def Fd#I : Xf<I, "F"#!shl(I,1), []>;
+foreach I = 32-255 in
+  def Fd#I : Xf<I, "F"#!shl(I,1), []>,
+  DwarfRegNum<[!add(I,394)]>;
+
+foreach I = 0-31 in
+  def D#I : Xd<I, "F"#!shl(I,1), [!cast<SparcReg>("Fd"#I)]>,
+  DwarfRegNum<[!add(I,72)]>;
+foreach I = 32-255 in
+  def D#I : Xd<I, "F"#!shl(I,1), [!cast<SparcReg>("Fd"#I)]>,
+  DwarfRegNum<[!add(I,394)]>;
 
 // Aliases of the F* registers used to hold 128-bit for values (long doubles).
 def Q0  : Rq< 0,  "F0", [D0,   D1]>;
@@ -317,20 +379,48 @@ def C26_C27 : Rdi<26, "C26", [C26, C27]>;
 def C28_C29 : Rdi<28, "C28", [C28, C29]>;
 def C30_C31 : Rdi<30, "C30", [C30, C31]>;
 
+// [S64fx] SIMD registers.  They are defined as 2-SIMD, assuming the
+// 4-SIMD case is also covered.  Subregister layout differs from the
+// actual one.
+
+class Zd<bits<16> i, string n, list<Register> subregs>
+  : SparcReg<!add(!and(i,224),!add(!and(!shl(i,1),31),!and(!srl(i,4),1))), n> {
+  let SubRegs = subregs;
+  let SubRegIndices = [subreg_v0, subreg_v1];
+  let CoveredBySubRegs = 1;
+}
+
+foreach I = 0-127 in
+  def ZD#I : Zd<I, "F"#!shl(I,1),
+                [!cast<SparcReg>("D"#I), !cast<SparcReg>("D"#!add(I,128))]>,
+  DwarfRegNum<[!add(I,858)]>;
+
+foreach I = 0-127 in
+  def ZF#I : Zd<I, "F"#!shl(I,1),
+                [!cast<SparcReg>("Fd"#I), !cast<SparcReg>("Fd"#!add(I,128))]>,
+  DwarfRegNum<[!add(I,730)]>;
+
 // Register classes.
 //
 // FIXME: the register order should be defined in terms of the preferred
 // allocation order...
-//
+
+// [S64fx] S64fx extends registers to 64 integer and 256 fp registers.
+// IntRegs, I64Regs, XFPRegs, and DFPRegs include the extended
+// registers.  The extended registers are disabled by setting them as
+// reserved when not S64fx.  Some instructions only accept the V9
+// registers, which use IntbRegs, I64bRegs, FPRegs, and DPbRegs ("b"
+// for base).
+
 // This register class should not be used to hold i64 values, use the I64Regs
 // register class for that. The i64 type is included here to allow i64 patterns
 // using the integer instructions.
 def IntRegs : RegisterClass<"SP", [i32, i64], 32,
                             (add (sequence "I%u", 0, 7),
                                  (sequence "G%u", 0, 7),
+                                 (sequence "XG%u", 0, 31),
                                  (sequence "L%u", 0, 7),
                                  (sequence "O%u", 0, 7))>;
-
 
 // Should be in the same order as IntRegs.
 def IntPair : RegisterClass<"SP", [v2i32], 64,
@@ -345,12 +435,43 @@ def IntPair : RegisterClass<"SP", [v2i32], 64,
 // spill slot is a stricter constraint than only requiring a 32-bit spill slot.
 def I64Regs : RegisterClass<"SP", [i64], 64, (add IntRegs)>;
 
-// Floating point register classes.
-def FPRegs : RegisterClass<"SP", [f32], 32, (sequence "F%u", 0, 31)>;
+def IntbRegs : RegisterClass<"SP", [i32, i64], 64,
+                             (add (sequence "I%u", 0, 7),
+                              (sequence "G%u", 0, 7),
+                              (sequence "L%u", 0, 7),
+                              (sequence "O%u", 0, 7))>;
 
-def DFPRegs : RegisterClass<"SP", [f64], 64, (sequence "D%u", 0, 31)>;
+def I64bRegs : RegisterClass<"SP", [i64], 64, (add IntbRegs)>;
+
+// Floating point register classes.
+
+// [S64fx] Single-precision FP register-classes are: FP for V9, XFP
+// for extended, and FPd for lower 32 extended registers.
+// Double-precision FP register-classes are: DFP for extended, and
+// DFPb for V9 registers.
+
+def FPRegs : RegisterClass<"SP", [f32], 32, (sequence "F%u", 0, 31)>;
+def XFPRegs : RegisterClass<"SP", [f32], 32, (sequence "Fd%u", 0, 255)>;
+def FPdRegs : RegisterClass<"SP", [f32], 64, (sequence "Fd%u", 0, 31)>;
+
+def DFPRegs : RegisterClass<"SP", [f64], 64, (sequence "D%u", 0, 255)>;
+def DFPbRegs : RegisterClass<"SP", [f64], 64, (sequence "D%u", 0, 31)>;
 
 def QFPRegs : RegisterClass<"SP", [f128], 128, (sequence "Q%u", 0, 15)>;
+
+// [S64fx] Vector element0 register-classes.  These are used for
+// restrictions of FDIV and FSQRT which only generate a result in
+// vector element0.
+
+def FPe0Regs : RegisterClass<"SP", [f32], 64, (sequence "Fd%u", 0, 127)>;
+def DFPe0Regs : RegisterClass<"SP", [f64], 64, (sequence "D%u", 0, 127)>;
+
+// [S64fx] Register-class for FMOVR.  It is used to move f32 values as
+// f64 values by FMOVR.
+
+def FPDPRegs : RegisterClass<"SP", [f32, f64], 64,
+                             (add (sequence "D%u", 0, 31),
+                              (sequence "Fd%u", 0, 31))>;
 
 // Floating point control register classes.
 def FCCRegs : RegisterClass<"SP", [i1], 1, (sequence "FCC%u", 0, 3)>;
@@ -359,14 +480,14 @@ let isAllocatable = 0 in {
   // Ancillary state registers
   def ASRRegs : RegisterClass<"SP", [i32], 32,
                               (add Y, (sequence "ASR%u", 1, 31))>;
-                            
+
   // This register class should not be used to hold i64 values.
   def CoprocRegs : RegisterClass<"SP", [i32], 32,
                                 (add (sequence "C%u", 0, 31))>;
 
   // Should be in the same order as CoprocRegs.
   def CoprocPair : RegisterClass<"SP", [v2i32], 64,
-    (add C0_C1,   C2_C3,   C4_C5,   C6_C7,   
+    (add C0_C1,   C2_C3,   C4_C5,   C6_C7,
          C8_C9,   C10_C11, C12_C13, C14_C15,
          C16_C17, C18_C19, C20_C21, C22_C23,
          C24_C25, C26_C27, C28_C29, C30_C31)>;
@@ -376,3 +497,16 @@ let isAllocatable = 0 in {
 def PRRegs : RegisterClass<"SP", [i64], 64,
     (add TPC, TNPC, TSTATE, TT, TICK, TBA, PSTATE, TL, PIL, CWP,
          CANSAVE, CANRESTORE, CLEANWIN, OTHERWIN, WSTATE)>;
+
+// [S64fx] SIMD register-classes.  Integer vectors v2i32/v2i64 are not
+// added to the register-classes for instruction definition, in order
+// to avoid vectorization on intgers.
+
+def V2FPRegs : RegisterClass<"SP", [v2f32, v2i1], 64,
+                             (sequence "ZF%u", 0, 127)>;
+def V2DFPRegs : RegisterClass<"SP", [v2f64, v2i1], 128,
+                              (sequence "ZD%u", 0, 127)>;
+def V4FPRegs : RegisterClass<"SP", [v4f32, v4i1], 128,
+                             (sequence "ZF%u", 0, 127)>;
+def V4DFPRegs : RegisterClass<"SP", [v4f64, v4i1], 256,
+                              (sequence "ZD%u", 0, 127)>;

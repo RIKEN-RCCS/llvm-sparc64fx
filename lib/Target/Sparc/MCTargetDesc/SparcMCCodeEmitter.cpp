@@ -70,6 +70,9 @@ public:
   unsigned getBranchOnRegTargetOpValue(const MCInst &MI, unsigned OpNo,
                                        SmallVectorImpl<MCFixup> &Fixups,
                                        const MCSubtargetInfo &STI) const;
+  /*[S64fx]*/
+  unsigned encodeSXARInstr(const MCInst& mi,
+                           const MCSubtargetInfo& sti) const;
 
 };
 } // end anonymous namespace
@@ -80,11 +83,67 @@ MCCodeEmitter *llvm::createSparcMCCodeEmitter(const MCInstrInfo &MCII,
   return new SparcMCCodeEmitter(Ctx);
 }
 
+// [S64fx] Returns the encoding of the SXAR1/SXAR2 instructions.  It
+// takes the fields from the real instructions, which are embedded in
+// the passed SXAR instruction.  The bit encoding of SXAR1/SXAR2 are:
+// op{31-30} sxar1/2{29} f_simd{28} f_urd{27-25} op2{24-22}
+// f_urs1{21-19} f_urs2{18-16} f_urs3{15-13} s_simd{12} s_urd{11-9}
+// s_urs1{8-6} s_urs2{5-3} s_urs3{2-0}.
+
+unsigned SparcMCCodeEmitter::
+encodeSXARInstr(const MCInst& mi, const MCSubtargetInfo& sti) const {
+  unsigned bits;
+  bits = ((0U << 30) | (7U << 22));
+  bits |= (((mi.getOpcode() == SP::SXAR1) ? 0 : 1) << 29);
+  int ninstructions = ((mi.getOpcode() == SP::SXAR1) ? 1 : 2);
+  assert(mi.getNumOperands() == (unsigned)(ninstructions * (1 + SPARC_S64FX_SXAR_EMBEDDED_OPERANDS)));
+  for (int i = 0; i < ninstructions; i++) {
+    MCInst mci0;
+    // Reconstruct the real instruction.
+    for (int j = 0; j < SPARC_S64FX_SXAR_EMBEDDED_OPERANDS; j++) {
+      const MCOperand &mo = mi.getOperand((5 * i) + j);
+      if (j == 0) {
+        mci0.setOpcode((unsigned)mo.getImm());
+      } else {
+        if (mo.isValid()) {
+          mci0.addOperand(mo);
+        }
+      }
+    }
+    SmallVector<MCFixup, 4> fixups;
+    uint64_t mibits = getBinaryCodeForInstr(mci0, fixups, sti);
+    unsigned hibits = (unsigned)(mibits >> 32);
+    unsigned simd = (((hibits >> 12) & 3) == 0 ? 0 : 1);
+    unsigned urd = (hibits >> 9) & 7;
+    unsigned urs1 = (hibits >> 6) & 7;
+    unsigned urs2 = (hibits >> 3) & 7;
+    unsigned urs3 = (hibits >> 0) & 7;
+    if (i == 0) {
+      bits |= (simd << 28);
+      bits |= (urd << 25);
+      bits |= (urs1 << 19);
+      bits |= (urs2 << 16);
+      bits |= (urs3 << 13);
+    } else {
+      bits |= (simd << 12);
+      bits |= (urd << 9);
+      bits |= (urs1 << 6);
+      bits |= (urs2 << 3);
+      bits |= (urs3 << 0);
+    }
+  }
+  return bits;
+}
+
 void SparcMCCodeEmitter::encodeInstruction(const MCInst &MI, raw_ostream &OS,
                                            SmallVectorImpl<MCFixup> &Fixups,
                                            const MCSubtargetInfo &STI) const {
-  unsigned Bits = getBinaryCodeForInstr(MI, Fixups, STI);
-
+  unsigned Bits;
+  if (MI.getOpcode() != SP::SXAR1 && MI.getOpcode() != SP::SXAR2) {
+    Bits = getBinaryCodeForInstr(MI, Fixups, STI);
+  } else {
+    Bits = encodeSXARInstr(MI, STI);
+  }
   if (Ctx.getAsmInfo()->isLittleEndian()) {
     // Output the bits in little-endian byte order.
     support::endian::Writer<support::little>(OS).write<uint32_t>(Bits);

@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Sparc.h"
 #include "SparcMCAsmInfo.h"
 #include "SparcMCExpr.h"
 #include "llvm/ADT/Triple.h"
@@ -36,7 +37,12 @@ SparcELFMCAsmInfo::SparcELFMCAsmInfo(const Triple &TheTriple) {
   CommentString = "!";
   SupportsDebugInformation = true;
 
-  ExceptionsType = ExceptionHandling::DwarfCFI;
+  /*[S64fx]*/
+  if (!llvm::SparcS64fxUsesOldAsm) {
+    ExceptionsType = ExceptionHandling::DwarfCFI;
+  } else {
+    ExceptionsType = ExceptionHandling::None;
+  }
 
   SunStyleELFSectionSwitchSyntax = true;
   UsesELFSectionDirectiveForBSS = true;
@@ -68,3 +74,5 @@ SparcELFMCAsmInfo::getExprForFDESymbol(const MCSymbol *Sym,
   }
   return MCAsmInfo::getExprForFDESymbol(Sym, Encoding, Streamer);
 }
+
+bool llvm::SparcS64fxUsesOldAsm = false;

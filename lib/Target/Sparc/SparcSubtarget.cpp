@@ -51,6 +51,10 @@ SparcSubtarget &SparcSubtarget::initializeSubtargetDependencies(StringRef CPU,
   FlushCacheLineSWAP = false;
   InsertNOPsLoadStore = false;
 
+  // [S64fx] S64fx features.
+  IsACE1 = false;
+  IsACE2 = false;
+
   // Determine default and user specified characteristics
   std::string CPUName = CPU;
   if (CPUName.empty())

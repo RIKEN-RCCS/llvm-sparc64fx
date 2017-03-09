@@ -29,6 +29,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ErrorHandling.h"
 using namespace llvm;
 
@@ -99,6 +100,8 @@ static bool CC_Sparc_Assign_Ret_Split_64(unsigned &ValNo, MVT &ValVT,
 
   return true;
 }
+
+// [S64fx] Note S64fx does not change the calling convention.
 
 // Allocate a full-sized argument for the 64-bit ABI.
 static bool CC_Sparc64_Full(unsigned &ValNo, MVT &ValVT,
@@ -1457,12 +1460,22 @@ SparcTargetLowering::SparcTargetLowering(const TargetMachine &TM,
   // matters much whether it's ZeroOrOneBooleanContent, or
   // ZeroOrNegativeOneBooleanContent, so, arbitrarily choose the
   // former.
-  setBooleanContents(ZeroOrOneBooleanContent);
-  setBooleanVectorContents(ZeroOrOneBooleanContent);
+  if (!Subtarget->isACE()) {
+    setBooleanContents(ZeroOrOneBooleanContent);
+    setBooleanVectorContents(ZeroOrOneBooleanContent);
+  } else {
+    // [S64fx] S64fx defines all-ones as true.
+    setBooleanContents(ZeroOrNegativeOneBooleanContent);
+    setBooleanVectorContents(ZeroOrNegativeOneBooleanContent);
+  }
 
   // Set up the register classes.
   addRegisterClass(MVT::i32, &SP::IntRegsRegClass);
-  if (!Subtarget->useSoftFloat()) {
+  if (Subtarget->isACE()) {
+    addRegisterClass(MVT::f32, &SP::XFPRegsRegClass);
+    addRegisterClass(MVT::f64, &SP::DFPRegsRegClass);
+    addRegisterClass(MVT::f128, &SP::QFPRegsRegClass);
+  } else if (!Subtarget->useSoftFloat()) {
     addRegisterClass(MVT::f32, &SP::FPRegsRegClass);
     addRegisterClass(MVT::f64, &SP::DFPRegsRegClass);
     addRegisterClass(MVT::f128, &SP::QFPRegsRegClass);
@@ -1563,15 +1576,46 @@ SparcTargetLowering::SparcTargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::BITCAST, MVT::i32, Expand);
 
   // Sparc has no select or setcc: expand to SELECT_CC.
-  setOperationAction(ISD::SELECT, MVT::i32, Expand);
-  setOperationAction(ISD::SELECT, MVT::f32, Expand);
-  setOperationAction(ISD::SELECT, MVT::f64, Expand);
-  setOperationAction(ISD::SELECT, MVT::f128, Expand);
+  if (!Subtarget->isACE()) {
+    setOperationAction(ISD::SELECT, MVT::i32, Expand);
+    setOperationAction(ISD::SELECT, MVT::f32, Expand);
+    setOperationAction(ISD::SELECT, MVT::f64, Expand);
+    setOperationAction(ISD::SELECT, MVT::f128, Expand);
 
-  setOperationAction(ISD::SETCC, MVT::i32, Expand);
-  setOperationAction(ISD::SETCC, MVT::f32, Expand);
-  setOperationAction(ISD::SETCC, MVT::f64, Expand);
-  setOperationAction(ISD::SETCC, MVT::f128, Expand);
+    setOperationAction(ISD::SETCC, MVT::i32, Expand);
+    setOperationAction(ISD::SETCC, MVT::f32, Expand);
+    setOperationAction(ISD::SETCC, MVT::f64, Expand);
+    setOperationAction(ISD::SETCC, MVT::f128, Expand);
+
+    setOperationAction(ISD::SELECT_CC, MVT::i32, Custom);
+    setOperationAction(ISD::SELECT_CC, MVT::f32, Custom);
+    setOperationAction(ISD::SELECT_CC, MVT::f64, Custom);
+    setOperationAction(ISD::SELECT_CC, MVT::f128, Custom);
+  } else {
+    // [S64fx] Let expand SELECT_CC on scalar FPs.  The
+    // custom-expansion for V9 uses FMOVcc, but it does not work with
+    // the extended registers.  A pair SETCC-SELECT is custom-expanded
+    // again to use FCMP(R) and FSELMOV.  See also
+    // isSelectSupported().
+
+    LegalizeAction IRRELEVANT = Legal;
+
+    setOperationAction(ISD::SELECT_CC, MVT::i32, Custom);
+    setOperationAction(ISD::SELECT_CC, MVT::f32, Expand);
+    setOperationAction(ISD::SELECT_CC, MVT::f64, Expand);
+    setOperationAction(ISD::SELECT_CC, MVT::f128, Custom);
+
+    setOperationAction(ISD::SETCC, MVT::i1, Expand);
+    setOperationAction(ISD::SETCC, MVT::i32, Expand);
+    setOperationAction(ISD::SETCC, MVT::f32, Custom);
+    setOperationAction(ISD::SETCC, MVT::f64, Custom);
+    setOperationAction(ISD::SETCC, MVT::f128, Expand);
+
+    setOperationAction(ISD::SELECT, MVT::i32, IRRELEVANT);
+    setOperationAction(ISD::SELECT, MVT::f32, Custom);
+    setOperationAction(ISD::SELECT, MVT::f64, Custom);
+    setOperationAction(ISD::SELECT, MVT::f128, Expand);
+  }
 
   // Sparc doesn't have BRCOND either, it has BR_CC.
   setOperationAction(ISD::BRCOND, MVT::Other, Expand);
@@ -1581,11 +1625,6 @@ SparcTargetLowering::SparcTargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::BR_CC, MVT::f32, Custom);
   setOperationAction(ISD::BR_CC, MVT::f64, Custom);
   setOperationAction(ISD::BR_CC, MVT::f128, Custom);
-
-  setOperationAction(ISD::SELECT_CC, MVT::i32, Custom);
-  setOperationAction(ISD::SELECT_CC, MVT::f32, Custom);
-  setOperationAction(ISD::SELECT_CC, MVT::f64, Custom);
-  setOperationAction(ISD::SELECT_CC, MVT::f128, Custom);
 
   setOperationAction(ISD::EH_SJLJ_SETJMP, MVT::i32, Custom);
   setOperationAction(ISD::EH_SJLJ_LONGJMP, MVT::Other, Custom);
@@ -1644,21 +1683,28 @@ SparcTargetLowering::SparcTargetLowering(const TargetMachine &TM,
     setOperationAction(ISD::FABS, MVT::f64, Custom);
   }
 
+  if (!Subtarget->isACE()) {
+    setOperationAction(ISD::FMA, MVT::f128, Expand);
+    setOperationAction(ISD::FMA, MVT::f64, Expand);
+    setOperationAction(ISD::FMA, MVT::f32, Expand);
+  } else {
+    setOperationAction(ISD::FMA, MVT::f128, Expand);
+    setOperationAction(ISD::FMA, MVT::f64, Legal);
+    setOperationAction(ISD::FMA, MVT::f32, Legal);
+  }
+
   setOperationAction(ISD::FSIN , MVT::f128, Expand);
   setOperationAction(ISD::FCOS , MVT::f128, Expand);
   setOperationAction(ISD::FSINCOS, MVT::f128, Expand);
   setOperationAction(ISD::FREM , MVT::f128, Expand);
-  setOperationAction(ISD::FMA  , MVT::f128, Expand);
   setOperationAction(ISD::FSIN , MVT::f64, Expand);
   setOperationAction(ISD::FCOS , MVT::f64, Expand);
   setOperationAction(ISD::FSINCOS, MVT::f64, Expand);
   setOperationAction(ISD::FREM , MVT::f64, Expand);
-  setOperationAction(ISD::FMA  , MVT::f64, Expand);
   setOperationAction(ISD::FSIN , MVT::f32, Expand);
   setOperationAction(ISD::FCOS , MVT::f32, Expand);
   setOperationAction(ISD::FSINCOS, MVT::f32, Expand);
   setOperationAction(ISD::FREM , MVT::f32, Expand);
-  setOperationAction(ISD::FMA  , MVT::f32, Expand);
   setOperationAction(ISD::CTTZ , MVT::i32, Expand);
   setOperationAction(ISD::CTLZ , MVT::i32, Expand);
   setOperationAction(ISD::ROTL , MVT::i32, Expand);
@@ -1813,6 +1859,24 @@ SparcTargetLowering::SparcTargetLowering(const TargetMachine &TM,
 
   setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::Other, Custom);
 
+  if (Subtarget->isACE1()) {
+    setS64fxFPOperationActions(MVT::v2f32);
+    setS64fxFPOperationActions(MVT::v2f64);
+    setS64fxI1OperationActions(MVT::v2i1);
+    //setS64fxINTOperationActions(MVT::v2i32);
+    //setS64fxINTOperationActions(MVT::v2i64);
+  }
+  if (Subtarget->isACE2()) {
+    setS64fxFPOperationActions(MVT::v4f32);
+    setS64fxFPOperationActions(MVT::v4f64);
+    setS64fxI1OperationActions(MVT::v4i1);
+    //setS64fxINTOperationActions(MVT::v4i32);
+    //setS64fxINTOperationActions(MVT::v4i64);
+  }
+  if (Subtarget->isACE()) {
+    //setTargetDAGCombine(ISD::VSELECT);
+  }
+
   setMinFunctionAlignment(2);
 
   computeRegisterProperties(Subtarget->getRegisterInfo());
@@ -1848,11 +1912,22 @@ const char *SparcTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case SPISD::TLS_ADD:         return "SPISD::TLS_ADD";
   case SPISD::TLS_LD:          return "SPISD::TLS_LD";
   case SPISD::TLS_CALL:        return "SPISD::TLS_CALL";
+    /*[S64fx]*/
+  case SPISD::SETCC_F:         return "SPISD::SETCC_F";
+  case SPISD::SELECT_F:        return "SPISD::SELECT_F";
+  case SPISD::BOOL_MOVE_F:      return "SPISD::BOOL_MOVE_F";
+  case SPISD::BOOL_MOVE_I:      return "SPISD::BOOL_MOVE_I";
+
+  //case SPISD::SPVSELECT:       return "SPISD::SPVSELECT";
   }
   return nullptr;
 }
 
-EVT SparcTargetLowering::getSetCCResultType(const DataLayout &, LLVMContext &,
+// [S64fx] MEMO: This is called for a branch condition and it need not
+// be modified.
+
+EVT SparcTargetLowering::getSetCCResultType(const DataLayout &,
+                                            LLVMContext &Context,
                                             EVT VT) const {
   if (!VT.isVector())
     return MVT::i32;
@@ -2742,13 +2817,46 @@ static SDValue LowerF128Load(SDValue Op, SelectionDAG &DAG)
   return DAG.getMergeValues(Ops, dl);
 }
 
-static SDValue LowerLOAD(SDValue Op, SelectionDAG &DAG)
+static SDValue LowerLOAD(SDValue Op, SelectionDAG &DAG,
+                         const SparcTargetLowering &TLI)
 {
   LoadSDNode *LdNode = cast<LoadSDNode>(Op.getNode());
 
   EVT MemVT = LdNode->getMemoryVT();
   if (MemVT == MVT::f128)
     return LowerF128Load(Op, DAG);
+
+  // [S64fx] Use a custom load for unaligned vectors.  It generates
+  // loads for unaligned vectors by scalarizeVectorLoad().  It avoids
+  // temporary stack slots used by the default expansion.  See
+  // SelectionDAGLegalize::LegalizeLoadOps() in LegalizeDAG.cpp.
+
+  assert(!(MemVT == MVT::v2i32 || MemVT == MVT::v2i64
+           || MemVT == MVT::v4i32 || MemVT == MVT::v4i64));
+  if (MemVT == MVT::v2f32 || MemVT == MVT::v2f64
+      || MemVT == MVT::v4f32 || MemVT == MVT::v4f64) {
+    LoadSDNode* n = cast<LoadSDNode>(Op.getNode());
+    EVT vt = n->getMemoryVT();
+    unsigned as = n->getAddressSpace();
+    unsigned align = n->getAlignment();
+    const DataLayout &dl = DAG.getDataLayout();
+    if (TLI.allowsMemoryAccess(*DAG.getContext(), dl, vt, as, align)) {
+      // Do nothing when aligned.
+      return Op;
+    } else if (0) {
+      // (Generates the same code as the default).
+      SDValue val = SDValue(n, 0);
+      SDValue chain = SDValue(n, 1);
+      std::tie(val, chain) = TLI.expandUnalignedLoad(n, DAG);
+      SDValue ops[2] = {val, chain};
+      SDLoc loc(Op);
+      SDValue op1 = DAG.getMergeValues(ops, loc);
+      return op1;
+    } else {
+      SDValue op2 = TLI.scalarizeVectorLoad(n, DAG);
+      return op2;
+    }
+  }
 
   return Op;
 }
@@ -2790,8 +2898,8 @@ static SDValue LowerF128Store(SDValue Op, SelectionDAG &DAG) {
   return DAG.getNode(ISD::TokenFactor, dl, MVT::Other, OutChains);
 }
 
-static SDValue LowerSTORE(SDValue Op, SelectionDAG &DAG)
-{
+static SDValue LowerSTORE(SDValue Op, SelectionDAG &DAG,
+                          const SparcTargetLowering &TLI) {
   SDLoc dl(Op);
   StoreSDNode *St = cast<StoreSDNode>(Op.getNode());
 
@@ -2807,6 +2915,31 @@ static SDValue LowerSTORE(SDValue Op, SelectionDAG &DAG)
         St->getChain(), dl, Val, St->getBasePtr(), St->getPointerInfo(),
         St->isVolatile(), St->getMemOperand()->getFlags(), St->getAAInfo());
     return Chain;
+  }
+
+  // [S64fx] Use a custom store for unaligned vectors.  It generates
+  // stores for unaligned vectors by scalarizeVectorStore().
+
+  assert(!(MemVT == MVT::v2i32 || MemVT == MVT::v2i64
+           || MemVT == MVT::v4i32 || MemVT == MVT::v4i64));
+  if (MemVT == MVT::v2f32 || MemVT == MVT::v2f64
+      || MemVT == MVT::v4f32 || MemVT == MVT::v4f64) {
+    StoreSDNode* n = cast<StoreSDNode>(Op.getNode());
+    EVT vt = n->getMemoryVT();
+    unsigned as = n->getAddressSpace();
+    unsigned align = n->getAlignment();
+    const DataLayout &dl = DAG.getDataLayout();
+    if (TLI.allowsMemoryAccess(*DAG.getContext(), dl, vt, as, align)) {
+      // Do nothing when aligned.
+      return Op;
+    } else if (0) {
+      // (Generates the same code as the default).
+      SDValue op1 = TLI.expandUnalignedStore(n, DAG);
+      return op1;
+    } else {
+      SDValue op2 = TLI.scalarizeVectorStore(n, DAG);
+      return op2;
+    }
   }
 
   return SDValue();
@@ -3010,8 +3143,8 @@ LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::DYNAMIC_STACKALLOC: return LowerDYNAMIC_STACKALLOC(Op, DAG,
                                                                Subtarget);
 
-  case ISD::LOAD:               return LowerLOAD(Op, DAG);
-  case ISD::STORE:              return LowerSTORE(Op, DAG);
+  case ISD::LOAD:               return LowerLOAD(Op, DAG, *this);
+  case ISD::STORE:              return LowerSTORE(Op, DAG, *this);
   case ISD::FADD:               return LowerF128Op(Op, DAG,
                                        getLibcallName(RTLIB::ADD_F128), 2);
   case ISD::FSUB:               return LowerF128Op(Op, DAG,
@@ -3035,6 +3168,14 @@ LowerOperation(SDValue Op, SelectionDAG &DAG) const {
   case ISD::ATOMIC_LOAD:
   case ISD::ATOMIC_STORE:       return LowerATOMIC_LOAD_STORE(Op, DAG);
   case ISD::INTRINSIC_WO_CHAIN: return LowerINTRINSIC_WO_CHAIN(Op, DAG);
+
+    /*[S64fx]*/
+  case ISD::BUILD_VECTOR:       return lower_BUILD_VECTOR(Op, DAG);
+  case ISD::INSERT_VECTOR_ELT:  return lower_INSERT_VECTOR_ELT(Op, DAG);
+  case ISD::EXTRACT_VECTOR_ELT: return lower_EXTRACT_VECTOR_ELT(Op, DAG);
+
+  case ISD::SELECT:             return lower_SELECT(Op, DAG);
+  case ISD::SETCC:              return lower_SETCC(Op, DAG);
   }
 }
 
@@ -3493,6 +3634,7 @@ void SparcTargetLowering::ReplaceNodeResults(SDNode *N,
                                   1));
     return;
   case ISD::LOAD: {
+    assert(!Subtarget->isACE());
     LoadSDNode *Ld = cast<LoadSDNode>(N);
     // Custom handling only for i64: turn i64 load into a v2i32 load,
     // and a bitcast.
@@ -3524,4 +3666,243 @@ bool SparcTargetLowering::useLoadStackGuardNode() const {
 void SparcTargetLowering::insertSSPDeclarations(Module &M) const {
   if (!Subtarget->isTargetLinux())
     return TargetLowering::insertSSPDeclarations(M);
+}
+
+// [S64fx] Allows FMA.
+
+bool SparcTargetLowering::
+isFMAFasterThanFMulAndFAdd(EVT VT) const /*override*/ {
+  if (Subtarget->isACE()) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
+// [S64fx] Legalizes constant load on 0.0; otherwise, it is replaced
+// by loading a constant.  It should be allowed for VIS.
+
+bool SparcTargetLowering::
+isFPImmLegal(const APFloat& imm, EVT vt) const /*override*/ {
+  if (Subtarget->isACE()) {
+    union {unsigned int i; float f;} onesfp = {~0U};
+    union {unsigned long i; double f;} onesdp = {~0UL};
+    return (((vt == MVT::f32 || vt == MVT::f64) && imm.isPosZero())
+            || (vt == MVT::f32 && imm.bitwiseIsEqual(APFloat(onesfp.f)))
+            || (vt == MVT::f64 && imm.bitwiseIsEqual(APFloat(onesdp.f))));
+  } else {
+    return false;
+  }
+}
+
+// [S64fx] Tells SELECT works only on scalar values.
+
+bool SparcTargetLowering::
+isSelectSupported(SelectSupportKind kind) const /*override*/ {
+  switch (kind) {
+  case ScalarValSelect: return true;
+  case ScalarCondVectorVal: return false;
+  case VectorMaskSelect: return false;
+  default: assert(0); return false;
+  }
+}
+
+// [S64fx] Lets choose FMA if possible.
+
+bool SparcTargetLowering::
+enableAggressiveFMAFusion(EVT vt) const /*override*/ {
+  EVT et = vt.getScalarType();
+  return (et == MVT::f32 || et == MVT::f64);
+}
+
+// [S64fx] Makes a boolean-value move from i32 to f32.  The code will
+// be mapped to the FMOVR instruction.
+
+static SDValue get_bool_move_i_to_f(SDValue vali, SelectionDAG& dag,
+                                    const SparcTargetLowering& tli) {
+  SDLoc dl(vali);
+  union {unsigned int i; float f;} ones = {~0U};
+  SDValue tpart = dag.getConstantFP(APFloat(ones.f), dl, MVT::f32);
+  SDValue fpart = dag.getConstantFP(0.0, dl, MVT::f32);
+  SDValue op1 = dag.getNode(ISD::SELECT, dl, MVT::f32, vali, tpart, fpart);
+  return op1;
+}
+
+// [S64fx] Makes a boolean-value move from f32 to i32.  The code will
+// be mapped to the MOVcc instruction.
+
+static SDValue get_bool_move_f_to_i(EVT vt, SDValue valf, SelectionDAG& dag,
+                                    const SparcTargetLowering& tli) {
+  SDLoc dl(valf);
+  SDValue zerof = dag.getConstantFP(0.0, dl, MVT::f32);
+  SDValue ones = dag.getConstant(~0, dl, MVT::i32);
+  SDValue zero = dag.getConstant(0, dl, MVT::i32);
+  SDValue cmp = dag.getCondCode(ISD::SETNE);
+  SDValue op1 = dag.getNode(ISD::SELECT_CC, dl, MVT::i32,
+                            valf, zerof, ones, zero, cmp);
+  SDValue op2 = LowerSELECT_CC(op1, dag, tli, false);
+  return op2;
+}
+
+// [S64fx] Makes a type reinterpretation from v2f32 to v2i1.
+
+static SDValue get_bool_move_vf_to_vi(SDValue op, SelectionDAG& dag,
+                                      const SparcTargetLowering& tli) {
+  LLVMContext& Context = *(dag.getContext());
+  SDLoc dl(op);
+  EVT ovt = op.getValueType();
+  unsigned vl = ovt.getVectorNumElements();
+  assert(vl == 2 || vl == 4);
+  EVT vt = EVT::getVectorVT(Context, MVT::i1, vl);
+  SDValue op1 = dag.getNode(SPISD::BOOL_MOVE_I, dl, vt, op);
+  return op1;
+}
+
+static SDValue get_bool_move_vi_to_vf(SDValue op, SelectionDAG& dag,
+                                      const SparcTargetLowering& tli) {
+  LLVMContext& Context = *(dag.getContext());
+  SDLoc dl(op);
+  EVT ovt = op.getValueType();
+  unsigned vl = ovt.getVectorNumElements();
+  assert(vl == 2 || vl == 4);
+  EVT vt = EVT::getVectorVT(Context, MVT::f32, vl);
+  SDValue op1 = dag.getNode(SPISD::BOOL_MOVE_F, dl, vt, op);
+  return op1;
+}
+
+// Converts BUILD_VECTOR for boolean (i32->v2i1) with multiple steps.
+// It makes a new BUILD_VECTOR with a converted type (f32->v2f32).
+
+SDValue SparcTargetLowering::
+lower_BUILD_VECTOR(SDValue op, SelectionDAG& dag) const {
+  MVT vt0 = op.getSimpleValueType();
+  assert(vt0 == MVT::v2i1 || vt0 == MVT::v4i1);
+  LLVMContext& Context = *(dag.getContext());
+  SDLoc dl(op);
+
+  std::vector<SDValue> oprlist;
+  for (unsigned i = 0; i < op.getNumOperands(); i++) {
+    SDValue opr0 = op.getOperand(i);
+    SDValue opr1 = get_bool_move_i_to_f(opr0, dag, *this);
+    oprlist.push_back(opr1);
+  }
+  ArrayRef<SDValue> opr (oprlist);
+  unsigned vl = op.getValueType().getVectorNumElements();
+  EVT nvt = EVT::getVectorVT(Context, MVT::f32, vl);
+  SDValue op0 = dag.getNode(ISD::BUILD_VECTOR, dl, nvt, opr);
+  SDValue op1 = get_bool_move_vf_to_vi(op0, dag, *this);
+  return op1;
+}
+
+SDValue SparcTargetLowering::
+lower_INSERT_VECTOR_ELT(SDValue op, SelectionDAG& dag) const {
+  MVT vt = op.getSimpleValueType();
+  assert(vt == MVT::v2i1 || vt == MVT::v4i1);
+  SDLoc dl(op);
+  SDValue veci = op.getOperand(0);
+  SDValue vali = op.getOperand(1);
+  SDValue pos = op.getOperand(2);
+  SDValue vecf = get_bool_move_vi_to_vf(veci, dag, *this);
+  SDValue valf = get_bool_move_i_to_f(vali, dag, *this);
+  SDValue op1 = dag.getNode(ISD::INSERT_VECTOR_ELT, dl, vt, vecf, valf, pos);
+  SDValue op2 = get_bool_move_vf_to_vi(op1, dag, *this);
+  return op2;
+}
+
+SDValue SparcTargetLowering::
+lower_EXTRACT_VECTOR_ELT(SDValue op, SelectionDAG& dag) const {
+  MVT vt0 = op.getOperand(0).getSimpleValueType();
+  assert(vt0 == MVT::v2i1 || vt0 == MVT::v4i1);
+  EVT vt = op.getValueType();
+  SDLoc dl(op);
+  SDValue veci = op.getOperand(0);
+  SDValue pos = op.getOperand(1);
+  SDValue vecf = get_bool_move_vi_to_vf(veci, dag, *this);
+  SDValue op1 = dag.getNode(ISD::EXTRACT_VECTOR_ELT, dl, MVT::f32, vecf, pos);
+  SDValue op2 = get_bool_move_f_to_i(vt, op1, dag, *this);
+  return op2;
+}
+
+// [S64fx] Converts SETCC to SETCC_F on scalars.
+
+static SDValue get_setcc_f(SDValue op, SelectionDAG& dag,
+                           const SparcTargetLowering& tli) {
+  assert(!op.getValueType().isVector());
+  SDValue a0 = op.getOperand(0);
+  SDValue a1 = op.getOperand(1);
+  SDValue cmp = op.getOperand(2);
+  SDLoc dl(op);
+  SDValue op1 = dag.getNode(SPISD::SETCC_F, dl, MVT::f32, a0, a1, cmp);
+  return op1;
+}
+
+// [S64fx] Converts SETCC to SETCC_F on scalar FPs.  Then, it adds
+// true conversion from f32 to i1 or a dummy conversion by a
+// BOOL_MOVE_I, depending if SETCC is a direct argument to SELECT on
+// FPs.  The BOOL_MOVE_I is removed quickly.
+
+SDValue SparcTargetLowering::
+lower_SETCC(SDValue op, SelectionDAG& dag) const {
+  MVT vt0 = op.getSimpleValueType();
+  assert(vt0 == MVT::i1 || vt0 == MVT::i32);
+  EVT vt = op.getValueType();
+  assert(!vt.isVector());
+
+  if (op.getOperand(0).getValueType().isFloatingPoint()) {
+    SDValue op1 = get_setcc_f(op, dag, *this);
+
+    const SDNode& n = *op.getNode();
+    bool selectpairing;
+    selectpairing = true;
+    for (SDNode::use_iterator i = n.use_begin(); i != n.use_end(); i++) {
+      const SDNode& up = *(*i);
+      MVT upvt = up.getSimpleValueType(0);
+      selectpairing &= (up.getOpcode() == ISD::SELECT
+                        && (upvt == MVT::f32 || upvt == MVT::f64));
+    }
+
+    if (selectpairing) {
+      SDLoc dl(op);
+      SDValue op2 = dag.getNode(SPISD::BOOL_MOVE_I, dl, vt, op1);
+      return op2;
+    } else {
+      SDValue op2 = get_bool_move_f_to_i(vt, op1, dag, *this);
+      return op2;
+    }
+  } else {
+    return op;
+  }
+}
+
+// [S64fx] Converts a pair of SETCC and SELECT on scalar FPs to
+// SETCC_F and SELECT_F, whose condition part is of type f32.
+// Otherwise, it keeps them as SELECT (and uses FMOVR which is not
+// extended).
+
+SDValue SparcTargetLowering::
+lower_SELECT(SDValue op, SelectionDAG& dag) const {
+  MVT vt0 = op.getSimpleValueType();
+  assert(vt0 == MVT::f32 || vt0 == MVT::f64);
+  EVT vt = op.getValueType();
+  assert(!vt.isVector());
+
+  SDValue cond = op.getOperand(0);
+  SDValue a0 = op.getOperand(1);
+  SDValue a1 = op.getOperand(2);
+  SDLoc dl(op);
+  if (cond.getOpcode() == ISD::SETCC
+      && cond.getOperand(0).getValueType().isFloatingPoint()) {
+    SDValue condfp = get_setcc_f(cond, dag, *this);
+    assert(condfp.getOpcode() == SPISD::SETCC_F);
+    SDValue op1 = dag.getNode(SPISD::SELECT_F, dl, vt, condfp, a0, a1);
+    return op1;
+  } else if (cond.getOpcode() == SPISD::BOOL_MOVE_I) {
+    SDValue condfp = cond.getOperand(0);
+    assert(condfp.getOpcode() == SPISD::SETCC_F);
+    SDValue op1 = dag.getNode(SPISD::SELECT_F, dl, vt, condfp, a0, a1);
+    return op1;
+  } else {
+    //return SDValue();
+    return op;
+  }
 }

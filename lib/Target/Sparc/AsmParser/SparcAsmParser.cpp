@@ -121,18 +121,20 @@ public:
   static const MCPhysReg DoubleRegs[32] = {
     Sparc::D0,  Sparc::D1,  Sparc::D2,  Sparc::D3,
     Sparc::D4,  Sparc::D5,  Sparc::D6,  Sparc::D7,
-    Sparc::D8,  Sparc::D7,  Sparc::D8,  Sparc::D9,
+    Sparc::D8,  Sparc::D9,  Sparc::D10, Sparc::D11,
     Sparc::D12, Sparc::D13, Sparc::D14, Sparc::D15,
     Sparc::D16, Sparc::D17, Sparc::D18, Sparc::D19,
     Sparc::D20, Sparc::D21, Sparc::D22, Sparc::D23,
     Sparc::D24, Sparc::D25, Sparc::D26, Sparc::D27,
     Sparc::D28, Sparc::D29, Sparc::D30, Sparc::D31 };
 
-  static const MCPhysReg QuadFPRegs[32] = {
+#if 0 /*[S64fx]*/
+  static const MCPhysReg QuadFPRegs[16] = {
     Sparc::Q0,  Sparc::Q1,  Sparc::Q2,  Sparc::Q3,
     Sparc::Q4,  Sparc::Q5,  Sparc::Q6,  Sparc::Q7,
     Sparc::Q8,  Sparc::Q9,  Sparc::Q10, Sparc::Q11,
     Sparc::Q12, Sparc::Q13, Sparc::Q14, Sparc::Q15 };
+#endif /*[S64fx]*/
 
   static const MCPhysReg ASRRegs[32] = {
     SP::Y,     SP::ASR1,  SP::ASR2,  SP::ASR3,
@@ -165,7 +167,7 @@ public:
     Sparc::C8_C9,   Sparc::C10_C11, Sparc::C12_C13, Sparc::C14_C15,
     Sparc::C16_C17, Sparc::C18_C19, Sparc::C20_C21, Sparc::C22_C23,
     Sparc::C24_C25, Sparc::C26_C27, Sparc::C28_C29, Sparc::C30_C31};
-  
+
 /// SparcOperand - Instances of this class represent a parsed Sparc machine
 /// instruction.
 class SparcOperand : public MCParsedAsmOperand {
@@ -385,7 +387,10 @@ public:
     return true;
   }
 
+  // [S64fx] S64fx has 256 registers.
+
   static bool MorphToDoubleReg(SparcOperand &Op) {
+#if 0 /*[S64fx]*/
     unsigned Reg = Op.getReg();
     assert(Op.Reg.Kind == rk_FloatReg);
     unsigned regIdx = Reg - Sparc::F0;
@@ -394,7 +399,20 @@ public:
     Op.Reg.RegNum = DoubleRegs[regIdx / 2];
     Op.Reg.Kind = rk_DoubleReg;
     return true;
+#else
+    unsigned Reg = Op.getReg();
+    assert(Op.Reg.Kind == rk_FloatReg);
+    unsigned regIdx = Reg - Sparc::F0;
+    if (regIdx >= 256) {
+      return false;
+    }
+    Op.Reg.RegNum = Sparc::D0 + regIdx;
+    Op.Reg.Kind = rk_DoubleReg;
+    return true;
+#endif /*[S64fx]*/
   }
+
+  // [S64fx] S64fx has 256 registers.
 
   static bool MorphToQuadReg(SparcOperand &Op) {
     unsigned Reg = Op.getReg();
@@ -402,16 +420,32 @@ public:
     switch (Op.Reg.Kind) {
     default: llvm_unreachable("Unexpected register kind!");
     case rk_FloatReg:
+#if 0 /*[S64fx]*/
       regIdx = Reg - Sparc::F0;
       if (regIdx % 4 || regIdx > 31)
         return false;
       Reg = QuadFPRegs[regIdx / 4];
+#else
+      regIdx = Reg - Sparc::F0;
+      if ((regIdx % 2) != 0 || regIdx >= 256) {
+        return false;
+      }
+      Reg = Sparc::Q0 + (regIdx / 2);
+#endif
       break;
     case rk_DoubleReg:
+#if 0 /*[S64fx]*/
       regIdx =  Reg - Sparc::D0;
       if (regIdx % 2 || regIdx > 31)
         return false;
       Reg = QuadFPRegs[regIdx / 2];
+#else
+      regIdx = Reg - Sparc::D0;
+      if ((regIdx % 2) != 0 || regIdx >= 256) {
+        return false;
+      }
+      Reg = Sparc::Q0 + (regIdx / 2);
+#endif
       break;
     }
     Op.Reg.RegNum = Reg;
@@ -431,7 +465,7 @@ public:
     Op.Reg.Kind = rk_CoprocPairReg;
     return true;
   }
-  
+
   static std::unique_ptr<SparcOperand>
   MorphToMEMrr(unsigned Base, std::unique_ptr<SparcOperand> Op) {
     unsigned offsetReg = Op->getReg();
@@ -1010,7 +1044,7 @@ bool SparcAsmParser::matchRegisterName(const AsmToken &Tok,
       RegKind = SparcOperand::rk_Special;
       return true;
     }
-    
+
     if (name.equals("wim")) {
       RegNo = Sparc::WIM;
       RegKind = SparcOperand::rk_Special;
@@ -1044,6 +1078,7 @@ bool SparcAsmParser::matchRegisterName(const AsmToken &Tok,
     if (name.substr(0, 1).equals_lower("g")
         && !name.substr(1).getAsInteger(10, intVal)
         && intVal < 8) {
+      assert(intVal < 32);
       RegNo = IntRegs[intVal];
       RegKind = SparcOperand::rk_IntReg;
       return true;
@@ -1052,6 +1087,7 @@ bool SparcAsmParser::matchRegisterName(const AsmToken &Tok,
     if (name.substr(0, 1).equals_lower("o")
         && !name.substr(1).getAsInteger(10, intVal)
         && intVal < 8) {
+      assert((8 + intVal) < 32);
       RegNo = IntRegs[8 + intVal];
       RegKind = SparcOperand::rk_IntReg;
       return true;
@@ -1059,6 +1095,7 @@ bool SparcAsmParser::matchRegisterName(const AsmToken &Tok,
     if (name.substr(0, 1).equals_lower("l")
         && !name.substr(1).getAsInteger(10, intVal)
         && intVal < 8) {
+      assert((16 + intVal) < 32);
       RegNo = IntRegs[16 + intVal];
       RegKind = SparcOperand::rk_IntReg;
       return true;
@@ -1066,6 +1103,7 @@ bool SparcAsmParser::matchRegisterName(const AsmToken &Tok,
     if (name.substr(0, 1).equals_lower("i")
         && !name.substr(1).getAsInteger(10, intVal)
         && intVal < 8) {
+      assert((24 + intVal) < 32);
       RegNo = IntRegs[24 + intVal];
       RegKind = SparcOperand::rk_IntReg;
       return true;
@@ -1073,6 +1111,7 @@ bool SparcAsmParser::matchRegisterName(const AsmToken &Tok,
     // %f0 - %f31
     if (name.substr(0, 1).equals_lower("f")
         && !name.substr(1, 2).getAsInteger(10, intVal) && intVal < 32) {
+      assert(intVal < 32);
       RegNo = FloatRegs[intVal];
       RegKind = SparcOperand::rk_FloatReg;
       return true;
@@ -1082,6 +1121,7 @@ bool SparcAsmParser::matchRegisterName(const AsmToken &Tok,
         && !name.substr(1, 2).getAsInteger(10, intVal)
         && intVal >= 32 && intVal <= 62 && (intVal % 2 == 0)) {
       // FIXME: Check V9
+      assert((intVal / 2) < 32);
       RegNo = DoubleRegs[intVal/2];
       RegKind = SparcOperand::rk_DoubleReg;
       return true;
@@ -1090,6 +1130,7 @@ bool SparcAsmParser::matchRegisterName(const AsmToken &Tok,
     // %r0 - %r31
     if (name.substr(0, 1).equals_lower("r")
         && !name.substr(1, 2).getAsInteger(10, intVal) && intVal < 31) {
+      assert(intVal < 32);
       RegNo = IntRegs[intVal];
       RegKind = SparcOperand::rk_IntReg;
       return true;
@@ -1103,7 +1144,7 @@ bool SparcAsmParser::matchRegisterName(const AsmToken &Tok,
       RegKind = SparcOperand::rk_CoprocReg;
       return true;
     }
-    
+
     if (name.equals("tpc")) {
       RegNo = Sparc::TPC;
       RegKind = SparcOperand::rk_Special;
@@ -1177,6 +1218,33 @@ bool SparcAsmParser::matchRegisterName(const AsmToken &Tok,
     if (name.equals("wstate")) {
       RegNo = Sparc::WSTATE;
       RegKind = SparcOperand::rk_Special;
+      return true;
+    }
+
+    /*[S64fx]*/
+
+    // [S64fx] Handle S64fx registers.
+    // %xg0 - %xg32
+    if (name.substr(0, 2).equals_lower("xg")
+        && !name.substr(2, 3).getAsInteger(10, intVal) && intVal < 32) {
+      RegNo = (Sparc::XG0 + intVal);
+      RegKind = SparcOperand::rk_IntReg;
+      return true;
+    }
+    // %r32 - %r63
+    if (name.substr(0, 1).equals_lower("r")
+        && !name.substr(1, 2).getAsInteger(10, intVal)
+        && intVal >= 32 && intVal < 64) {
+      RegNo = (Sparc::XG0 + (intVal - 32));
+      RegKind = SparcOperand::rk_IntReg;
+      return true;
+    }
+    // %f64 - %f510 (Return Dn because the type cannot be singled out).
+    if (name.substr(0, 1).equals_lower("f")
+        && !name.substr(1, 3).getAsInteger(10, intVal)
+        && intVal >= 64 && intVal < 512 && (intVal % 2 == 0)) {
+      RegNo = (Sparc::D32 + ((intVal / 2) - 32));
+      RegKind = SparcOperand::rk_DoubleReg;
       return true;
     }
   }

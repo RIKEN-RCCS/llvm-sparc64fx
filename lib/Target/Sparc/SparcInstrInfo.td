@@ -67,6 +67,14 @@ def HasNoFsmuldFix : Predicate<"!Subtarget->fixFSMULD()">;
 // will pick deprecated instructions.
 def UseDeprecatedInsts : Predicate<"Subtarget->useDeprecatedV8Instructions()">;
 
+// [S64fx] NoACE disables V9 instructions on single-precision PFs when
+// not S64fx.  They are disabled, because V9 and S64fx are
+// incompatible due to a different subregister layout in S64fx
+// extensions.  Fixing a register-class by a feature-predicate would
+// be a better way, if possible.
+
+def NoACE : Predicate<"!Subtarget->isACE()">;
+
 //===----------------------------------------------------------------------===//
 // Instruction Pattern Stuff
 //===----------------------------------------------------------------------===//
@@ -152,6 +160,9 @@ def SDTSPbrcc :
 SDTypeProfile<0, 2, [SDTCisVT<0, OtherVT>, SDTCisVT<1, i32>]>;
 def SDTSPselectcc :
 SDTypeProfile<1, 3, [SDTCisSameAs<0, 1>, SDTCisSameAs<1, 2>, SDTCisVT<3, i32>]>;
+
+// FTOI, etc., work on integers stored in the FP registers.
+
 def SDTSPFTOI :
 SDTypeProfile<1, 1, [SDTCisVT<0, f32>, SDTCisFP<1>]>;
 def SDTSPITOF :
@@ -317,14 +328,14 @@ multiclass F3_12np<string OpcStr, bits<6> Op3Val, InstrItinClass itin = IIC_iu_i
 multiclass Load<string OpcStr, bits<6> Op3Val, SDPatternOperator OpNode,
            RegisterClass RC, ValueType Ty, InstrItinClass itin = IIC_iu_instr> {
   def rr  : F3_1<3, Op3Val,
-                 (outs RC:$dst), (ins MEMrr:$addr),
-                 !strconcat(OpcStr, " [$addr], $dst"),
-                 [(set Ty:$dst, (OpNode ADDRrr:$addr))],
+                 (outs RC:$rd), (ins MEMrr:$addr),
+                 !strconcat(OpcStr, " [$addr], $rd"),
+                 [(set Ty:$rd, (OpNode ADDRrr:$addr))],
                  itin>;
   def ri  : F3_2<3, Op3Val,
-                 (outs RC:$dst), (ins MEMri:$addr),
-                 !strconcat(OpcStr, " [$addr], $dst"),
-                 [(set Ty:$dst, (OpNode ADDRri:$addr))],
+                 (outs RC:$rd), (ins MEMri:$addr),
+                 !strconcat(OpcStr, " [$addr], $rd"),
+                 [(set Ty:$rd, (OpNode ADDRri:$addr))],
                  itin>;
 }
 
@@ -332,8 +343,8 @@ multiclass Load<string OpcStr, bits<6> Op3Val, SDPatternOperator OpNode,
 // CodeGen's address spaces to use these is a future task.
 class LoadASI<string OpcStr, bits<6> Op3Val, SDPatternOperator OpNode,
               RegisterClass RC, ValueType Ty, InstrItinClass itin = NoItinerary> :
-  F3_1_asi<3, Op3Val, (outs RC:$dst), (ins MEMrr:$addr, i8imm:$asi),
-                !strconcat(OpcStr, "a [$addr] $asi, $dst"),
+  F3_1_asi<3, Op3Val, (outs RC:$rd), (ins MEMrr:$addr, i8imm:$asi),
+                !strconcat(OpcStr, "a [$addr] $asi, $rd"),
                 []>;
 
 // LoadA multiclass - As above, but also define alternate address space variant
@@ -347,13 +358,13 @@ multiclass LoadA<string OpcStr, bits<6> Op3Val, bits<6> LoadAOp3Val,
 // The LDSTUB instruction is supported for asm only.
 // It is unlikely that general-purpose code could make use of it.
 // CAS is preferred for sparc v9.
-def LDSTUBrr : F3_1<3, 0b001101, (outs IntRegs:$dst), (ins MEMrr:$addr),
-                    "ldstub [$addr], $dst", []>;
-def LDSTUBri : F3_2<3, 0b001101, (outs IntRegs:$dst), (ins MEMri:$addr),
-                    "ldstub [$addr], $dst", []>;
-def LDSTUBArr : F3_1_asi<3, 0b011101, (outs IntRegs:$dst),
+def LDSTUBrr : F3_1<3, 0b001101, (outs IntRegs:$rd), (ins MEMrr:$addr),
+                    "ldstub [$addr], $rd", []>;
+def LDSTUBri : F3_2<3, 0b001101, (outs IntRegs:$rd), (ins MEMri:$addr),
+                    "ldstub [$addr], $rd", []>;
+def LDSTUBArr : F3_1_asi<3, 0b011101, (outs IntRegs:$rd),
                          (ins MEMrr:$addr, i8imm:$asi),
-                         "ldstuba [$addr] $asi, $dst", []>;
+                         "ldstuba [$addr] $asi, $rd", []>;
 
 // Store multiclass - Define both Reg+Reg/Reg+Imm patterns in one shot.
 multiclass Store<string OpcStr, bits<6> Op3Val, SDPatternOperator OpNode,
@@ -432,6 +443,7 @@ let Uses = [ICC], usesCustomInserter = 1 in {
    : Pseudo<(outs IntRegs:$dst), (ins IntRegs:$T, IntRegs:$F, i32imm:$Cond),
             "; SELECT_CC_Int_ICC PSEUDO!",
             [(set i32:$dst, (SPselecticc i32:$T, i32:$F, imm:$Cond))]>;
+  let Predicates = [NoACE] in
   def SELECT_CC_FP_ICC
    : Pseudo<(outs FPRegs:$dst), (ins FPRegs:$T, FPRegs:$F, i32imm:$Cond),
             "; SELECT_CC_FP_ICC PSEUDO!",
@@ -455,10 +467,12 @@ let usesCustomInserter = 1, Uses = [FCC0] in {
             "; SELECT_CC_Int_FCC PSEUDO!",
             [(set i32:$dst, (SPselectfcc i32:$T, i32:$F, imm:$Cond))]>;
 
+  let Predicates = [NoACE] in
   def SELECT_CC_FP_FCC
    : Pseudo<(outs FPRegs:$dst), (ins FPRegs:$T, FPRegs:$F, i32imm:$Cond),
             "; SELECT_CC_FP_FCC PSEUDO!",
             [(set f32:$dst, (SPselectfcc f32:$T, f32:$F, imm:$Cond))]>;
+
   def SELECT_CC_DFP_FCC
    : Pseudo<(outs DFPRegs:$dst), (ins DFPRegs:$T, DFPRegs:$F, i32imm:$Cond),
             "; SELECT_CC_DFP_FCC PSEUDO!",
@@ -499,11 +513,11 @@ let DecoderMethod = "DecodeLoadInt" in {
   defm LD   : LoadA<"ld",   0b000000, 0b010000, load,        IntRegs, i32>;
 }
 
-let DecoderMethod = "DecodeLoadIntPair" in
+let DecoderMethod = "DecodeLoadIntPair", Predicates = [NoACE] in
   defm LDD : LoadA<"ldd", 0b000011, 0b010011, load, IntPair, v2i32, IIC_ldd>;
 
 // Section B.2 - Load Floating-point Instructions, p. 92
-let DecoderMethod = "DecodeLoadFP" in {
+let DecoderMethod = "DecodeLoadFP", Predicates = [NoACE] in {
   defm LDF   : Load<"ld",  0b100000, load,    FPRegs,  f32, IIC_iu_or_fpu_instr>;
   def LDFArr : LoadASI<"ld",  0b110000, load, FPRegs,  f32, IIC_iu_or_fpu_instr>,
                 Requires<[HasV9]>;
@@ -554,11 +568,11 @@ let DecoderMethod = "DecodeStoreInt" in {
   defm ST    : StoreA<"st",  0b000100, 0b010100, store,         IntRegs, i32>;
 }
 
-let DecoderMethod = "DecodeStoreIntPair" in
+let DecoderMethod = "DecodeStoreIntPair", Predicates = [NoACE] in
   defm STD   : StoreA<"std", 0b000111, 0b010111, store, IntPair, v2i32, IIC_std>;
 
 // Section B.5 - Store Floating-point Instructions, p. 97
-let DecoderMethod = "DecodeStoreFP" in {
+let DecoderMethod = "DecodeStoreFP", Predicates = [NoACE] in {
   defm STF   : Store<"st",  0b100100, store,         FPRegs,  f32>;
   def STFArr : StoreASI<"st",  0b110100, store,      FPRegs,  f32>,
                Requires<[HasV9]>;
@@ -618,18 +632,18 @@ let DecoderMethod = "DecodeStoreFP" in {
 
 // Section B.8 - SWAP Register with Memory Instruction
 // (Atomic swap)
-let Constraints = "$val = $dst", DecoderMethod = "DecodeSWAP" in {
+let Constraints = "$val = $rd", DecoderMethod = "DecodeSWAP" in {
   def SWAPrr : F3_1<3, 0b001111,
-                 (outs IntRegs:$dst), (ins MEMrr:$addr, IntRegs:$val),
-                 "swap [$addr], $dst",
-                 [(set i32:$dst, (atomic_swap_32 ADDRrr:$addr, i32:$val))]>;
+                 (outs IntRegs:$rd), (ins MEMrr:$addr, IntRegs:$val),
+                 "swap [$addr], $rd",
+                 [(set i32:$rd, (atomic_swap_32 ADDRrr:$addr, i32:$val))]>;
   def SWAPri : F3_2<3, 0b001111,
-                 (outs IntRegs:$dst), (ins MEMri:$addr, IntRegs:$val),
-                 "swap [$addr], $dst",
-                 [(set i32:$dst, (atomic_swap_32 ADDRri:$addr, i32:$val))]>;
+                 (outs IntRegs:$rd), (ins MEMri:$addr, IntRegs:$val),
+                 "swap [$addr], $rd",
+                 [(set i32:$rd, (atomic_swap_32 ADDRri:$addr, i32:$val))]>;
   def SWAPArr : F3_1_asi<3, 0b011111,
-                 (outs IntRegs:$dst), (ins MEMrr:$addr, i8imm:$asi, IntRegs:$val),
-                 "swapa [$addr] $asi, $dst",
+                 (outs IntRegs:$rd), (ins MEMrr:$addr, i8imm:$asi, IntRegs:$val),
+                 "swapa [$addr] $asi, $rd",
                  [/*FIXME: pattern?*/]>;
 }
 
@@ -927,13 +941,13 @@ let Uses = [O6],
 let isTerminator = 1, hasDelaySlot = 1, isBarrier = 1,
     DecoderMethod = "DecodeJMPL" in {
   def JMPLrr: F3_1<2, 0b111000,
-                   (outs IntRegs:$dst), (ins MEMrr:$addr),
-                   "jmpl $addr, $dst",
+                   (outs IntRegs:$rd), (ins MEMrr:$addr),
+                   "jmpl $addr, $rd",
                    [],
                    IIC_jmp_or_call>;
   def JMPLri: F3_2<2, 0b111000,
-                   (outs IntRegs:$dst), (ins MEMri:$addr),
-                   "jmpl $addr, $dst",
+                   (outs IntRegs:$rd), (ins MEMri:$addr),
+                   "jmpl $addr, $rd",
                    [],
                    IIC_jmp_or_call>;
 }
@@ -1002,7 +1016,7 @@ let DecoderNamespace = "SparcV9", DecoderMethod = "DecodeTRAP", Predicates = [Ha
   defm TICC : TRAP<"%icc">;
 
 
-let isBarrier = 1, isTerminator = 1, rd = 0b01000, rs1 = 0, simm13 = 5 in
+let isBarrier = 1, isTerminator = 1, rd = 0b00001000, rs1 = 0, simm13 = 5 in
   def TA5 : F3_2<0b10, 0b111010, (outs), (ins), "ta 5", [(trap)]>;
 
 // Section B.28 - Read State Register Instructions
@@ -1068,7 +1082,7 @@ let Predicates = [HasNoV9] in {
 }
 
 // Section B.30 - STBAR Instruction
-let hasSideEffects = 1, rd = 0, rs1 = 0b01111, rs2 = 0 in
+let hasSideEffects = 1, rd = 0, rs1 = 0b00001111, rs2 = 0 in
   def STBAR : F3_1<2, 0b101000, (outs), (ins), "stbar", []>;
 
 
@@ -1087,23 +1101,26 @@ let rd = 0 in {
   // The no-arg FLUSH is only here for the benefit of the InstAlias
   // "flush", which cannot seem to use FLUSHrr, due to the inability
   // to construct a MEMrr with fixed G0 registers.
-  let rs1 = 0, rs2 = 0 in
+  let rd = 0, rs1 = 0, rs2 = 0 in
     def FLUSH   : F3_1<2, 0b111011, (outs), (ins), "flush %g0", []>;
 }
 
 // Section B.33 - Floating-point Operate (FPop) Instructions
 
 // Convert Integer to Floating-point Instructions, p. 141
+let Predicates = [NoACE] in
 def FITOS : F3_3u<2, 0b110100, 0b011000100,
                  (outs FPRegs:$rd), (ins FPRegs:$rs2),
                  "fitos $rs2, $rd",
                  [(set FPRegs:$rd, (SPitof FPRegs:$rs2))],
                  IIC_fpu_fast_instr>;
+let Predicates = [NoACE] in
 def FITOD : F3_3u<2, 0b110100, 0b011001000,
                  (outs DFPRegs:$rd), (ins FPRegs:$rs2),
                  "fitod $rs2, $rd",
                  [(set DFPRegs:$rd, (SPitof FPRegs:$rs2))],
                  IIC_fpu_fast_instr>;
+let Predicates = [NoACE] in
 def FITOQ : F3_3u<2, 0b110100, 0b011001100,
                  (outs QFPRegs:$rd), (ins FPRegs:$rs2),
                  "fitoq $rs2, $rd",
@@ -1111,16 +1128,19 @@ def FITOQ : F3_3u<2, 0b110100, 0b011001100,
                  Requires<[HasHardQuad]>;
 
 // Convert Floating-point to Integer Instructions, p. 142
+let Predicates = [NoACE] in
 def FSTOI : F3_3u<2, 0b110100, 0b011010001,
                  (outs FPRegs:$rd), (ins FPRegs:$rs2),
                  "fstoi $rs2, $rd",
                  [(set FPRegs:$rd, (SPftoi FPRegs:$rs2))],
                  IIC_fpu_fast_instr>;
+let Predicates = [NoACE] in
 def FDTOI : F3_3u<2, 0b110100, 0b011010010,
                  (outs FPRegs:$rd), (ins DFPRegs:$rs2),
                  "fdtoi $rs2, $rd",
                  [(set FPRegs:$rd, (SPftoi DFPRegs:$rs2))],
                  IIC_fpu_fast_instr>;
+let Predicates = [NoACE] in
 def FQTOI : F3_3u<2, 0b110100, 0b011010011,
                  (outs FPRegs:$rd), (ins QFPRegs:$rs2),
                  "fqtoi $rs2, $rd",
@@ -1128,16 +1148,19 @@ def FQTOI : F3_3u<2, 0b110100, 0b011010011,
                  Requires<[HasHardQuad]>;
 
 // Convert between Floating-point Formats Instructions, p. 143
+let Predicates = [NoACE] in
 def FSTOD : F3_3u<2, 0b110100, 0b011001001,
                  (outs DFPRegs:$rd), (ins FPRegs:$rs2),
                  "fstod $rs2, $rd",
                  [(set f64:$rd, (fextend f32:$rs2))],
                  IIC_fpu_stod>;
+let Predicates = [NoACE] in
 def FSTOQ : F3_3u<2, 0b110100, 0b011001101,
                  (outs QFPRegs:$rd), (ins FPRegs:$rs2),
                  "fstoq $rs2, $rd",
                  [(set f128:$rd, (fextend f32:$rs2))]>,
                  Requires<[HasHardQuad]>;
+let Predicates = [NoACE] in
 def FDTOS : F3_3u<2, 0b110100, 0b011000110,
                  (outs FPRegs:$rd), (ins DFPRegs:$rs2),
                  "fdtos $rs2, $rd",
@@ -1148,6 +1171,7 @@ def FDTOQ : F3_3u<2, 0b110100, 0b011001110,
                  "fdtoq $rs2, $rd",
                  [(set f128:$rd, (fextend f64:$rs2))]>,
                  Requires<[HasHardQuad]>;
+let Predicates = [NoACE] in
 def FQTOS : F3_3u<2, 0b110100, 0b011000111,
                  (outs FPRegs:$rd), (ins QFPRegs:$rs2),
                  "fqtos $rs2, $rd",
@@ -1160,32 +1184,34 @@ def FQTOD : F3_3u<2, 0b110100, 0b011001011,
                  Requires<[HasHardQuad]>;
 
 // Floating-point Move Instructions, p. 144
+let Predicates = [NoACE] in
 def FMOVS : F3_3u<2, 0b110100, 0b000000001,
                  (outs FPRegs:$rd), (ins FPRegs:$rs2),
                  "fmovs $rs2, $rd", []>;
+let Predicates = [NoACE] in
 def FNEGS : F3_3u<2, 0b110100, 0b000000101,
                  (outs FPRegs:$rd), (ins FPRegs:$rs2),
                  "fnegs $rs2, $rd",
                  [(set f32:$rd, (fneg f32:$rs2))],
                  IIC_fpu_negs>;
+let Predicates = [NoACE] in
 def FABSS : F3_3u<2, 0b110100, 0b000001001,
                  (outs FPRegs:$rd), (ins FPRegs:$rs2),
                  "fabss $rs2, $rd",
                  [(set f32:$rd, (fabs f32:$rs2))],
                  IIC_fpu_abs>;
 
-
 // Floating-point Square Root Instructions, p.145
 // FSQRTS generates an erratum on LEON processors, so by disabling this instruction
 // this will be promoted to use FSQRTD with doubles instead.
-let Predicates = [HasNoFdivSqrtFix] in 
+let Predicates = [HasNoFdivSqrtFix, NoACE] in
 def FSQRTS : F3_3u<2, 0b110100, 0b000101001,
-                  (outs FPRegs:$rd), (ins FPRegs:$rs2),
+                  (outs FPe0Regs:$rd), (ins FPRegs:$rs2),
                   "fsqrts $rs2, $rd",
                   [(set f32:$rd, (fsqrt f32:$rs2))],
                   IIC_fpu_sqrts>;
 def FSQRTD : F3_3u<2, 0b110100, 0b000101010,
-                  (outs DFPRegs:$rd), (ins DFPRegs:$rs2),
+                  (outs DFPe0Regs:$rd), (ins DFPRegs:$rs2),
                   "fsqrtd $rs2, $rd",
                   [(set f64:$rd, (fsqrt f64:$rs2))],
                   IIC_fpu_sqrtd>;
@@ -1198,6 +1224,7 @@ def FSQRTQ : F3_3u<2, 0b110100, 0b000101011,
 
 
 // Floating-point Add and Subtract Instructions, p. 146
+let Predicates = [NoACE] in
 def FADDS  : F3_3<2, 0b110100, 0b001000001,
                   (outs FPRegs:$rd), (ins FPRegs:$rs1, FPRegs:$rs2),
                   "fadds $rs1, $rs2, $rd",
@@ -1214,6 +1241,7 @@ def FADDQ  : F3_3<2, 0b110100, 0b001000011,
                   [(set f128:$rd, (fadd f128:$rs1, f128:$rs2))]>,
                   Requires<[HasHardQuad]>;
 
+let Predicates = [NoACE] in
 def FSUBS  : F3_3<2, 0b110100, 0b001000101,
                   (outs FPRegs:$rd), (ins FPRegs:$rs1, FPRegs:$rs2),
                   "fsubs $rs1, $rs2, $rd",
@@ -1234,7 +1262,7 @@ def FSUBQ  : F3_3<2, 0b110100, 0b001000111,
 // Floating-point Multiply and Divide Instructions, p. 147
 // FMULS generates an erratum on LEON processors, so by disabling this instruction
 // this will be promoted to use FMULD with doubles instead.
-let Predicates = [HasNoFmulsFix] in 
+let Predicates = [HasNoFmulsFix, NoACE] in
 def FMULS  : F3_3<2, 0b110100, 0b001001001,
                   (outs FPRegs:$rd), (ins FPRegs:$rs1, FPRegs:$rs2),
                   "fmuls $rs1, $rs2, $rd",
@@ -1251,7 +1279,7 @@ def FMULQ  : F3_3<2, 0b110100, 0b001001011,
                   [(set f128:$rd, (fmul f128:$rs1, f128:$rs2))]>,
                   Requires<[HasHardQuad]>;
 
-let Predicates = [HasNoFsmuldFix] in
+let Predicates = [HasNoFsmuldFix, NoACE] in
 def FSMULD : F3_3<2, 0b110100, 0b001101001,
                   (outs DFPRegs:$rd), (ins FPRegs:$rs1, FPRegs:$rs2),
                   "fsmuld $rs1, $rs2, $rd",
@@ -1267,13 +1295,14 @@ def FDMULQ : F3_3<2, 0b110100, 0b001101110,
 
 // FDIVS generates an erratum on LEON processors, so by disabling this instruction
 // this will be promoted to use FDIVD with doubles instead.
+let Predicates = [NoACE] in
 def FDIVS  : F3_3<2, 0b110100, 0b001001101,
-                 (outs FPRegs:$rd), (ins FPRegs:$rs1, FPRegs:$rs2),
+                 (outs FPe0Regs:$rd), (ins FPRegs:$rs1, FPRegs:$rs2),
                  "fdivs $rs1, $rs2, $rd",
                  [(set f32:$rd, (fdiv f32:$rs1, f32:$rs2))],
                  IIC_fpu_divs>;
 def FDIVD  : F3_3<2, 0b110100, 0b001001110,
-                 (outs DFPRegs:$rd), (ins DFPRegs:$rs1, DFPRegs:$rs2),
+                 (outs DFPe0Regs:$rd), (ins DFPRegs:$rs1, DFPRegs:$rs2),
                  "fdivd $rs1, $rs2, $rd",
                  [(set f64:$rd, (fdiv f64:$rs1, f64:$rs2))],
                  IIC_fpu_divd>;
@@ -1290,7 +1319,7 @@ def FDIVQ  : F3_3<2, 0b110100, 0b001001111,
 // This behavior is modeled with a forced noop after the instruction in
 // DelaySlotFiller.
 
-let Defs = [FCC0], rd = 0, isCodeGenOnly = 1 in {
+let Defs = [FCC0], rd = 0, isCodeGenOnly = 1, Predicates = [NoACE] in {
   def FCMPS  : F3_3c<2, 0b110101, 0b001010001,
                    (outs), (ins FPRegs:$rs1, FPRegs:$rs2),
                    "fcmps $rs1, $rs2",
@@ -1374,15 +1403,15 @@ let Predicates = [HasV9], Constraints = "$f = $rd" in {
                     (SPselectfcc simm11:$simm11, i32:$f, imm:$cond))]>;
   }
 
-  let Uses = [ICC], intcc = 1, opf_cc = 0b00 in {
+  let Uses = [ICC], intcc = 1, opf_cc = 0b00, Predicates = [HasV9, NoACE] in {
     def FMOVS_ICC
       : F4_3<0b110101, 0b000001, (outs FPRegs:$rd),
              (ins FPRegs:$rs2, FPRegs:$f, CCOp:$cond),
              "fmovs$cond %icc, $rs2, $rd",
              [(set f32:$rd, (SPselecticc f32:$rs2, f32:$f, imm:$cond))]>;
     def FMOVD_ICC
-      : F4_3<0b110101, 0b000010, (outs DFPRegs:$rd),
-               (ins DFPRegs:$rs2, DFPRegs:$f, CCOp:$cond),
+      : F4_3<0b110101, 0b000010, (outs DFPbRegs:$rd),
+               (ins DFPbRegs:$rs2, DFPbRegs:$f, CCOp:$cond),
                "fmovd$cond %icc, $rs2, $rd",
                [(set f64:$rd, (SPselecticc f64:$rs2, f64:$f, imm:$cond))]>;
     def FMOVQ_ICC
@@ -1393,7 +1422,7 @@ let Predicates = [HasV9], Constraints = "$f = $rd" in {
                Requires<[HasHardQuad]>;
   }
 
-  let Uses = [FCC0], intcc = 0, opf_cc = 0b00 in {
+  let Uses = [FCC0], intcc = 0, opf_cc = 0b00, Predicates = [HasV9, NoACE] in {
     def FMOVS_FCC
       : F4_3<0b110101, 0b000001, (outs FPRegs:$rd),
              (ins FPRegs:$rs2, FPRegs:$f, CCOp:$cond),
@@ -1401,7 +1430,7 @@ let Predicates = [HasV9], Constraints = "$f = $rd" in {
              [(set f32:$rd, (SPselectfcc f32:$rs2, f32:$f, imm:$cond))]>;
     def FMOVD_FCC
       : F4_3<0b110101, 0b000010, (outs DFPRegs:$rd),
-             (ins DFPRegs:$rs2, DFPRegs:$f, CCOp:$cond),
+             (ins DFPbRegs:$rs2, DFPbRegs:$f, CCOp:$cond),
              "fmovd$cond %fcc0, $rs2, $rd",
              [(set f64:$rd, (SPselectfcc f64:$rs2, f64:$f, imm:$cond))]>;
     def FMOVQ_FCC
@@ -1484,8 +1513,8 @@ let Predicates = [HasV9] in {
              (ins FCCRegs:$opf_cc, FPRegs:$rs2, FPRegs:$f, CCOp:$cond),
              "fmovs$cond $opf_cc, $rs2, $rd", []>;
     def V9FMOVD_FCC
-      : F4_3<0b110101, 0b000010, (outs DFPRegs:$rd),
-             (ins FCCRegs:$opf_cc, DFPRegs:$rs2, DFPRegs:$f, CCOp:$cond),
+      : F4_3<0b110101, 0b000010, (outs DFPbRegs:$rd),
+             (ins FCCRegs:$opf_cc, DFPbRegs:$rs2, DFPbRegs:$f, CCOp:$cond),
              "fmovd$cond $opf_cc, $rs2, $rd", []>;
     def V9FMOVQ_FCC
       : F4_3<0b110101, 0b000011, (outs QFPRegs:$rd),
@@ -1505,7 +1534,7 @@ let rs1 = 0 in
 def : Pat<(ctpop i32:$src),
           (POPCrr (SRLri $src, 0))>;
 
-let Predicates = [HasV9], hasSideEffects = 1, rd = 0, rs1 = 0b01111 in
+let Predicates = [HasV9], hasSideEffects = 1, rd = 0, rs1 = 0b00001111 in
  def MEMBARi : F3_2<2, 0b101000, (outs), (ins simm13Op:$simm13),
                     "membar $simm13", []>;
 
@@ -1674,6 +1703,7 @@ def : Pat<(atomic_store_16 ADDRri:$dst, i32:$val), (STHri ADDRri:$dst, $val)>;
 def : Pat<(atomic_store_32 ADDRrr:$dst, i32:$val), (STrr ADDRrr:$dst, $val)>;
 def : Pat<(atomic_store_32 ADDRri:$dst, i32:$val), (STri ADDRri:$dst, $val)>;
 
+let Predicates = [NoACE] in {
 // extract_vector
 def : Pat<(extractelt (v2i32 IntPair:$Rn), 0),
           (i32 (EXTRACT_SUBREG IntPair:$Rn, sub_even))>;
@@ -1685,8 +1715,9 @@ def : Pat<(build_vector (i32 IntRegs:$a1), (i32 IntRegs:$a2)),
           (INSERT_SUBREG
 	    (INSERT_SUBREG (v2i32 (IMPLICIT_DEF)), (i32 IntRegs:$a1), sub_even),
             (i32 IntRegs:$a2), sub_odd)>;
-
+}
 
 include "SparcInstr64Bit.td"
 include "SparcInstrVIS.td"
 include "SparcInstrAliases.td"
+include "SparcInstrS64fx.td"

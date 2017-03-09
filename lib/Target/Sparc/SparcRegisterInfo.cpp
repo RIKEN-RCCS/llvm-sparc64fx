@@ -95,14 +95,36 @@ BitVector SparcRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
     }
   }
 
+  // [S64fx] Disable S64fx registers, when not S64fx.
+
+  if (!(Subtarget.isACE1() || Subtarget.isACE2())) {
+    fprintf(stderr, "AHO disable S64fx registers.\n");
+    for (unsigned i = 0; i < 32; i++) {
+      for (MCRegAliasIterator a(SP::XG0 + i, this, true); a.isValid(); ++a) {
+        Reserved.set(*a);
+      }
+    }
+    for (unsigned i = 0; i < (256 - 32); i++) {
+      for (MCRegAliasIterator a(SP::D32 + i, this, true); a.isValid(); ++a) {
+        Reserved.set(*a);
+      }
+    }
+  }
+
   return Reserved;
 }
+
+// [S64fx] Returns a register-class for "ptr_rc", which is
+// PointerLikeRegClass<0> (kind=0).  It is assumed only kind=0 is
+// used, and it is for CALLs.  It returns V9 registers, because CALL
+// instructions do not take extended registers.
 
 const TargetRegisterClass*
 SparcRegisterInfo::getPointerRegClass(const MachineFunction &MF,
                                       unsigned Kind) const {
+  assert(Kind == 0);
   const SparcSubtarget &Subtarget = MF.getSubtarget<SparcSubtarget>();
-  return Subtarget.is64Bit() ? &SP::I64RegsRegClass : &SP::IntRegsRegClass;
+  return Subtarget.is64Bit() ? &SP::I64bRegsRegClass : &SP::IntbRegsRegClass;
 }
 
 static void replaceFI(MachineFunction &MF, MachineBasicBlock::iterator II,

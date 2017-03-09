@@ -17,6 +17,12 @@
 #include "SparcRegisterInfo.h"
 #include "llvm/Target/TargetInstrInfo.h"
 
+// [S64fx] Add check of constant all ones.
+
+namespace llvm {
+  bool isAllOnes(SDNode* N);
+}
+
 #define GET_INSTRINFO_HEADER
 #include "SparcGenInstrInfo.inc"
 
@@ -99,6 +105,16 @@ public:
 
   // Lower pseudo instructions after register allocation.
   bool expandPostRAPseudo(MachineInstr &MI) const override;
+
+  /*[S64fx]*/
+  void copyPhysRegFPInArgs(MachineBasicBlock &MBB,
+                         MachineBasicBlock::iterator I,
+                         const DebugLoc &DL, unsigned DestReg,
+                         unsigned SrcReg, bool KillSrc) const;
+  void copyPhysRegFPOutArgs(MachineBasicBlock &MBB,
+                            MachineBasicBlock::iterator I,
+                            const DebugLoc &DL, unsigned DestReg,
+                         unsigned SrcReg, bool KillSrc) const;
 };
 
 }

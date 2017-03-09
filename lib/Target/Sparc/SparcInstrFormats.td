@@ -7,16 +7,31 @@
 //
 //===----------------------------------------------------------------------===//
 
+// [S64fx] XAR bits hold the bits for the extended register numbers,
+// which will be stored in the SXAR1/2 prefix instructions.
+// (rd{11-9}:rs1{8-6}:rs2{5-3}:rs3{2-0}).  These bits are taken from
+// the operands, and are temporarily stored in the higher bits in
+// Inst.  xar_v indicates extened instructions, and xar_simd=0 for
+// scalar, xar_simd=1 for 2-SIMD, simd=2 for 4-SIMD.  The bits xar_v
+// and xar_simd are also stored in TSFlags, which needs to be checked
+// before machine code emission.  MEMO: (0) The higher bits in Inst
+// are used instead of TSFlags, because storing them in TSFlags caused
+// undefined values which err with "Invalid TSFlags bit in INSN".  (1)
+// Bits of SoftFail and Size are made match to Inst.  They are set 48
+// bits to make tblgen not warn for disassembler (instruction
+// conflicts).
+
 class InstSP<dag outs, dag ins, string asmstr, list<dag> pattern,
              InstrItinClass itin = NoItinerary>
    : Instruction {
-  field bits<32> Inst;
+  field bits<48> Inst;
 
   let Namespace = "SP";
-  let Size = 4;
+  let Size = 6;
 
   bits<2> op;
   let Inst{31-30} = op;               // Top two bits are the 'op' field
+  let Inst{47-32} = 0;
 
   dag OutOperandList = outs;
   dag InOperandList = ins;
@@ -24,9 +39,27 @@ class InstSP<dag outs, dag ins, string asmstr, list<dag> pattern,
   let Pattern = pattern;
 
   let DecoderNamespace = "Sparc";
-  field bits<32> SoftFail = 0;
-  
+  field bits<48> SoftFail = 0;
+
   let Itinerary = itin;
+
+  bits<1> xar_v = 0;
+  bits<2> xar_simd = 0;
+  let TSFlags{2} = xar_v;
+  let TSFlags{1-0} = xar_simd;
+
+  bits<3> xar_rd = 0;
+  bits<3> xar_rs1 = 0;
+  bits<3> xar_rs2 = 0;
+  bits<3> xar_rs3 = 0;
+  bits<15> xar;
+  let xar{14} = xar_v;
+  let xar{13-12} = xar_simd;
+  let xar{11-9} = xar_rd;
+  let xar{8-6} = xar_rs1;
+  let xar{5-3} = xar_rs2;
+  let xar{2-0} = xar_rs3;
+  let Inst{46-32} = xar;
 }
 
 //===----------------------------------------------------------------------===//
@@ -110,13 +143,15 @@ class F2_4<bits<3> cond, bit annul, bit pred, dag outs, dag ins,
 class F3<dag outs, dag ins, string asmstr, list<dag> pattern,
          InstrItinClass itin = NoItinerary>
    : InstSP<outs, ins, asmstr, pattern, itin> {
-  bits<5> rd;
+  bits<8> rd;
   bits<6> op3;
-  bits<5> rs1;
+  bits<8> rs1;
   let op{1} = 1;   // Op = 2 or 3
-  let Inst{29-25} = rd;
+  let Inst{29-25} = rd{4-0};
   let Inst{24-19} = op3;
-  let Inst{18-14} = rs1;
+  let Inst{18-14} = rs1{4-0};
+  let xar_rd = rd{7-5};
+  let xar_rs1 = rs1{7-5};
 }
 
 // Specific F3 classes: SparcV8 manual, page 44
@@ -125,14 +160,15 @@ class F3_1_asi<bits<2> opVal, bits<6> op3val, dag outs, dag ins,
            string asmstr, list<dag> pattern, InstrItinClass itin = NoItinerary>
    : F3<outs, ins, asmstr, pattern, itin> {
   bits<8> asi;
-  bits<5> rs2;
+  bits<8> rs2;
 
   let op         = opVal;
   let op3        = op3val;
 
   let Inst{13}   = 0;     // i field = 0
   let Inst{12-5} = asi;   // address space identifier
-  let Inst{4-0}  = rs2;
+  let Inst{4-0}  = rs2{4-0};
+  let xar_rs2 = rs2{7-5};
 }
 
 class F3_1<bits<2> opVal, bits<6> op3val, dag outs, dag ins, string asmstr,
@@ -157,40 +193,43 @@ class F3_2<bits<2> opVal, bits<6> op3val, dag outs, dag ins,
 class F3_3<bits<2> opVal, bits<6> op3val, bits<9> opfval, dag outs, dag ins,
            string asmstr, list<dag> pattern, InstrItinClass itin = NoItinerary>
    : F3<outs, ins, asmstr, pattern, itin> {
-  bits<5> rs2;
+  bits<8> rs2;
 
   let op         = opVal;
   let op3        = op3val;
 
   let Inst{13-5} = opfval;   // fp opcode
-  let Inst{4-0}  = rs2;
+  let Inst{4-0}  = rs2{4-0};
+  let xar_rs2 = rs2{7-5};
 }
 
 // floating-point unary operations.
 class F3_3u<bits<2> opVal, bits<6> op3val, bits<9> opfval, dag outs, dag ins,
            string asmstr, list<dag> pattern, InstrItinClass itin = NoItinerary>
    : F3<outs, ins, asmstr, pattern, itin> {
-  bits<5> rs2;
+  bits<8> rs2;
 
   let op         = opVal;
   let op3        = op3val;
   let rs1        = 0;
 
   let Inst{13-5} = opfval;   // fp opcode
-  let Inst{4-0}  = rs2;
+  let Inst{4-0}  = rs2{4-0};
+  let xar_rs2 = rs2{7-5};
 }
 
 // floating-point compares.
 class F3_3c<bits<2> opVal, bits<6> op3val, bits<9> opfval, dag outs, dag ins,
            string asmstr, list<dag> pattern, InstrItinClass itin = NoItinerary>
    : F3<outs, ins, asmstr, pattern, itin> {
-  bits<5> rs2;
+  bits<8> rs2;
 
   let op         = opVal;
   let op3        = op3val;
 
   let Inst{13-5} = opfval;   // fp opcode
-  let Inst{4-0}  = rs2;
+  let Inst{4-0}  = rs2{4-0};
+  let xar_rs2 = rs2{7-5};
 }
 
 // Shift by register rs2.
@@ -198,14 +237,15 @@ class F3_Sr<bits<2> opVal, bits<6> op3val, bit xVal, dag outs, dag ins,
             string asmstr, list<dag> pattern, InstrItinClass itin = IIC_iu_instr>
    : F3<outs, ins, asmstr, pattern, itin> {
   bit x = xVal;           // 1 for 64-bit shifts.
-  bits<5> rs2;
+  bits<8> rs2;
 
   let op         = opVal;
   let op3        = op3val;
 
   let Inst{13}   = 0;     // i field = 0
   let Inst{12}   = x;     // extended registers.
-  let Inst{4-0}  = rs2;
+  let Inst{4-0}  = rs2{4-0};
+  let xar_rs2 = rs2{7-5};
 }
 
 // Shift by immediate.
@@ -240,11 +280,12 @@ multiclass F3_S<string OpcStr, bits<6> Op3Val, bit XVal, SDNode OpNode,
 class F4<bits<6> op3, dag outs, dag ins, string asmstr, list<dag> pattern,
            InstrItinClass itin = NoItinerary>
    : InstSP<outs, ins, asmstr, pattern, itin> {
-  bits<5> rd;
+  bits<8> rd;
 
   let op          = 2;
-  let Inst{29-25} = rd;
+  let Inst{29-25} = rd{4-0};
   let Inst{24-19} = op3;
+  let xar_rd = rd{7-5};
 }
 
 
@@ -255,13 +296,14 @@ class F4_1<bits<6> op3, dag outs, dag ins,
   bit    intcc;
   bits<2> cc;
   bits<4> cond;
-  bits<5> rs2;
+  bits<8> rs2;
 
-  let Inst{4-0}   = rs2;
+  let Inst{4-0}   = rs2{4-0};
   let Inst{12-11} = cc;
   let Inst{13}    = 0;
   let Inst{17-14} = cond;
   let Inst{18}    = intcc;
+  let xar_rs2 = rs2{7-5};
 }
 
 class F4_2<bits<6> op3, dag outs, dag ins,
@@ -287,27 +329,30 @@ class F4_3<bits<6> op3, bits<6> opf_low, dag outs, dag ins,
   bits<4> cond;
   bit     intcc;
   bits<2> opf_cc;
-  bits<5> rs2;
+  bits<8> rs2;
 
   let Inst{18}     = 0;
   let Inst{17-14}  = cond;
   let Inst{13}     = intcc;
   let Inst{12-11}  = opf_cc;
   let Inst{10-5}   = opf_low;
-  let Inst{4-0}    = rs2;
+  let Inst{4-0}    = rs2{4-0};
+  let xar_rs2 = rs2{7-5};
 }
 
 class F4_4r<bits<6> op3, bits<5> opf_low, bits<3> rcond, dag outs, dag ins,
             string asmstr, list<dag> pattern,
             InstrItinClass itin = NoItinerary>
    : F4<op3, outs, ins, asmstr, pattern, itin> {
-  bits <5> rs1;
-  bits <5> rs2;
-  let Inst{18-14} = rs1;
+  bits <8> rs1;
+  bits <8> rs2;
+  let Inst{18-14} = rs1{4-0};
   let Inst{13}    = 0;  // IsImm
   let Inst{12-10} = rcond;
   let Inst{9-5}   = opf_low;
-  let Inst{4-0}   = rs2;
+  let Inst{4-0}   = rs2{4-0};
+  let xar_rs1 = rs1{7-5};
+  let xar_rs2 = rs2{7-5};
 }
 
 
@@ -315,12 +360,13 @@ class F4_4i<bits<6> op3, bits<3> rcond, dag outs, dag ins,
             string asmstr, list<dag> pattern,
            InstrItinClass itin = NoItinerary>
    : F4<op3, outs, ins, asmstr, pattern, itin> {
-  bits<5> rs1;
+  bits<8> rs1;
   bits<10> simm10;
-  let Inst{18-14} = rs1;
+  let Inst{18-14} = rs1{4-0};
   let Inst{13}    = 1;  // IsImm
   let Inst{12-10} = rcond;
   let Inst{9-0}   = simm10;
+  let xar_rs1 = rs1{7-5};
 }
 
 
@@ -337,7 +383,6 @@ class TRAPSP<bits<6> op3Val, bit isimm, dag outs, dag ins,
    let op3 = op3Val;
    let Inst{13} = isimm;
    let Inst{12-11} = cc;
-
 }
 
 class TRAPSPrr<bits<6> op3Val, dag outs, dag ins,

@@ -51,6 +51,16 @@ unsigned SparcInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
       FrameIndex = MI.getOperand(1).getIndex();
       return MI.getOperand(0).getReg();
     }
+  } else if (MI.getOpcode() == SP::V2LDFri
+             || MI.getOpcode() == SP::V2LDDri
+             || MI.getOpcode() == SP::V4LDFri
+             || MI.getOpcode() == SP::V4LDDri) {
+    // [S64fx] Same as above.
+    if (MI.getOperand(1).isFI() && MI.getOperand(2).isImm()
+        && MI.getOperand(2).getImm() == 0) {
+      FrameIndex = MI.getOperand(1).getIndex();
+      return MI.getOperand(0).getReg();
+    }
   }
   return 0;
 }
@@ -65,6 +75,16 @@ unsigned SparcInstrInfo::isStoreToStackSlot(const MachineInstr &MI,
   if (MI.getOpcode() == SP::STri || MI.getOpcode() == SP::STXri ||
       MI.getOpcode() == SP::STFri || MI.getOpcode() == SP::STDFri ||
       MI.getOpcode() == SP::STQFri) {
+    if (MI.getOperand(0).isFI() && MI.getOperand(1).isImm() &&
+        MI.getOperand(1).getImm() == 0) {
+      FrameIndex = MI.getOperand(0).getIndex();
+      return MI.getOperand(2).getReg();
+    }
+  } else if (MI.getOpcode() == SP::V2STFri
+             || MI.getOpcode() == SP::V2STDri
+             || MI.getOpcode() == SP::V4STFri
+             || MI.getOpcode() == SP::V4STDri) {
+    // [S64fx] Same as above.
     if (MI.getOperand(0).isFI() && MI.getOperand(1).isImm() &&
         MI.getOperand(1).getImm() == 0) {
       FrameIndex = MI.getOperand(0).getIndex();
@@ -115,7 +135,7 @@ static SPCC::CondCodes GetOppositeBranchCondition(SPCC::CondCodes CC)
   case SPCC::FCC_UE:   return SPCC::FCC_LG;
   case SPCC::FCC_NE:   return SPCC::FCC_E;
   case SPCC::FCC_E:    return SPCC::FCC_NE;
-  
+
   case SPCC::CPCC_A:   return SPCC::CPCC_N;
   case SPCC::CPCC_N:   return SPCC::CPCC_A;
   case SPCC::CPCC_3:   // Fall through
@@ -316,6 +336,7 @@ void SparcInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                           SP::sub_odd64_then_sub_odd };
 
   if (SP::IntRegsRegClass.contains(DestReg, SrcReg))
+    // (Both 32bit and 64bit cases).
     BuildMI(MBB, I, DL, get(SP::ORrr), DestReg).addReg(SP::G0)
       .addReg(SrcReg, getKillRegState(KillSrc));
   else if (SP::IntPairRegClass.contains(DestReg, SrcReg)) {
@@ -362,6 +383,40 @@ void SparcInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
              SP::ASRRegsRegClass.contains(SrcReg)) {
     BuildMI(MBB, I, DL, get(SP::RDASR), DestReg)
         .addReg(SrcReg, getKillRegState(KillSrc));
+  } else if (SP::XFPRegsRegClass.contains(DestReg, SrcReg)) {
+    /*[S64fx]*/
+    BuildMI(MBB, I, DL, get(SP::FMOVSx), DestReg)
+      .addReg(SrcReg, getKillRegState(KillSrc));
+  } else if (SP::XFPRegsRegClass.contains(DestReg)
+             && SP::FPRegsRegClass.contains(SrcReg)) {
+    /*[S64fx]*/
+    // Move V9 and extended FP registers (single) in passing arguments.
+    copyPhysRegFPInArgs(MBB, I, DL, DestReg, SrcReg, KillSrc);
+  } else if (SP::FPRegsRegClass.contains(DestReg)
+             && SP::XFPRegsRegClass.contains(SrcReg)) {
+    /*[S64fx]*/
+    // Move V9 and extended FP registers (single) in passing arguments.
+    copyPhysRegFPOutArgs(MBB, I, DL, DestReg, SrcReg, KillSrc);
+  } else if (SP::V2FPRegsRegClass.contains(DestReg, SrcReg)) {
+    /*[S64fx]*/
+    assert(Subtarget.isACE());
+    BuildMI(MBB, I, DL, get(SP::V2FMOVS), DestReg)
+      .addReg(SrcReg, getKillRegState(KillSrc));
+  } else if (SP::V2DFPRegsRegClass.contains(DestReg, SrcReg)) {
+    /*[S64fx]*/
+    assert(Subtarget.isACE());
+    BuildMI(MBB, I, DL, get(SP::V2FMOVD), DestReg)
+      .addReg(SrcReg, getKillRegState(KillSrc));
+  } else if (SP::V4FPRegsRegClass.contains(DestReg, SrcReg)) {
+    /*[S64fx]*/
+    assert(Subtarget.isACE());
+    BuildMI(MBB, I, DL, get(SP::V4FMOVS), DestReg)
+      .addReg(SrcReg, getKillRegState(KillSrc));
+  } else if (SP::V4DFPRegsRegClass.contains(DestReg, SrcReg)) {
+    /*[S64fx]*/
+    assert(Subtarget.isACE());
+    BuildMI(MBB, I, DL, get(SP::V4FMOVD), DestReg)
+      .addReg(SrcReg, getKillRegState(KillSrc));
   } else
     llvm_unreachable("Impossible reg-to-reg copy");
 
@@ -403,16 +458,18 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
       MFI.getObjectSize(FI), MFI.getObjectAlignment(FI));
 
   // On the order of operands here: think "[FrameIdx + 0] = SrcReg".
-  if (RC == &SP::I64RegsRegClass)
+  if (SP::I64RegsRegClass.hasSubClassEq(RC))
+    // (Test 64bit case first).
     BuildMI(MBB, I, DL, get(SP::STXri)).addFrameIndex(FI).addImm(0)
       .addReg(SrcReg, getKillRegState(isKill)).addMemOperand(MMO);
-  else if (RC == &SP::IntRegsRegClass)
+  else if (SP::IntRegsRegClass.hasSubClassEq(RC))
+    // (32bit case only).
     BuildMI(MBB, I, DL, get(SP::STri)).addFrameIndex(FI).addImm(0)
       .addReg(SrcReg, getKillRegState(isKill)).addMemOperand(MMO);
   else if (RC == &SP::IntPairRegClass)
     BuildMI(MBB, I, DL, get(SP::STDri)).addFrameIndex(FI).addImm(0)
       .addReg(SrcReg, getKillRegState(isKill)).addMemOperand(MMO);
-  else if (RC == &SP::FPRegsRegClass)
+  else if (SP::FPRegsRegClass.hasSubClassEq(RC))
     BuildMI(MBB, I, DL, get(SP::STFri)).addFrameIndex(FI).addImm(0)
       .addReg(SrcReg,  getKillRegState(isKill)).addMemOperand(MMO);
   else if (SP::DFPRegsRegClass.hasSubClassEq(RC))
@@ -423,6 +480,35 @@ storeRegToStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
     // lowered into two STDs in eliminateFrameIndex.
     BuildMI(MBB, I, DL, get(SP::STQFri)).addFrameIndex(FI).addImm(0)
       .addReg(SrcReg,  getKillRegState(isKill)).addMemOperand(MMO);
+  else if (SP::XFPRegsRegClass.hasSubClassEq(RC)) {
+    /*[S64fx]*/
+    BuildMI(MBB, I, DL, get(SP::STFxri)).addFrameIndex(FI).addImm(0)
+      .addReg(SrcReg,  getKillRegState(isKill)).addMemOperand(MMO);
+  } else if (SP::V2FPRegsRegClass.hasSubClassEq(RC)) {
+    /*[S64fx]*/
+    assert(Subtarget.isACE());
+    BuildMI(MBB, I, DL, get(SP::V2STFri))
+      .addFrameIndex(FI).addImm(0)
+      .addReg(SrcReg, getKillRegState(isKill)).addMemOperand(MMO);
+  } else if (SP::V2DFPRegsRegClass.hasSubClassEq(RC)) {
+    /*[S64fx]*/
+    assert(Subtarget.isACE());
+    BuildMI(MBB, I, DL, get(SP::V2STDri))
+      .addFrameIndex(FI).addImm(0)
+      .addReg(SrcReg, getKillRegState(isKill)).addMemOperand(MMO);
+  } else if (SP::V4FPRegsRegClass.hasSubClassEq(RC)) {
+    /*[S64fx]*/
+    assert(Subtarget.isACE());
+    BuildMI(MBB, I, DL, get(SP::V4STFri))
+      .addFrameIndex(FI).addImm(0)
+      .addReg(SrcReg, getKillRegState(isKill)).addMemOperand(MMO);
+  } else if (SP::V4DFPRegsRegClass.hasSubClassEq(RC)) {
+    /*[S64fx]*/
+    assert(Subtarget.isACE());
+    BuildMI(MBB, I, DL, get(SP::V4STDri))
+      .addFrameIndex(FI).addImm(0)
+      .addReg(SrcReg, getKillRegState(isKill)).addMemOperand(MMO);
+  }
   else
     llvm_unreachable("Can't store this register to stack slot");
 }
@@ -441,16 +527,18 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
       MachinePointerInfo::getFixedStack(*MF, FI), MachineMemOperand::MOLoad,
       MFI.getObjectSize(FI), MFI.getObjectAlignment(FI));
 
-  if (RC == &SP::I64RegsRegClass)
+  if (SP::I64RegsRegClass.hasSubClassEq(RC))
+    // (Test 64bit case first).
     BuildMI(MBB, I, DL, get(SP::LDXri), DestReg).addFrameIndex(FI).addImm(0)
       .addMemOperand(MMO);
-  else if (RC == &SP::IntRegsRegClass)
+  else if (SP::IntRegsRegClass.hasSubClassEq(RC))
+    // (32bit case only).
     BuildMI(MBB, I, DL, get(SP::LDri), DestReg).addFrameIndex(FI).addImm(0)
       .addMemOperand(MMO);
   else if (RC == &SP::IntPairRegClass)
     BuildMI(MBB, I, DL, get(SP::LDDri), DestReg).addFrameIndex(FI).addImm(0)
       .addMemOperand(MMO);
-  else if (RC == &SP::FPRegsRegClass)
+  else if (SP::FPRegsRegClass.hasSubClassEq(RC))
     BuildMI(MBB, I, DL, get(SP::LDFri), DestReg).addFrameIndex(FI).addImm(0)
       .addMemOperand(MMO);
   else if (SP::DFPRegsRegClass.hasSubClassEq(RC))
@@ -461,7 +549,32 @@ loadRegFromStackSlot(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
     // lowered into two LDDs in eliminateFrameIndex.
     BuildMI(MBB, I, DL, get(SP::LDQFri), DestReg).addFrameIndex(FI).addImm(0)
       .addMemOperand(MMO);
-  else
+  else if (SP::XFPRegsRegClass.hasSubClassEq(RC)) {
+    /*[S64fx]*/
+    BuildMI(MBB, I, DL, get(SP::LDFxri), DestReg).addFrameIndex(FI).addImm(0)
+      .addMemOperand(MMO);
+  } else if (SP::V2FPRegsRegClass.hasSubClassEq(RC)) {
+    /*[S64fx]*/
+    assert(Subtarget.isACE());
+    BuildMI(MBB, I, DL, get(SP::V2LDFri), DestReg)
+      .addFrameIndex(FI).addImm(0).addMemOperand(MMO);
+  } else if (SP::V2DFPRegsRegClass.hasSubClassEq(RC)) {
+    /*[S64fx]*/
+    assert(Subtarget.isACE());
+    BuildMI(MBB, I, DL, get(SP::V2LDDri), DestReg)
+      .addFrameIndex(FI).addImm(0).addMemOperand(MMO);
+  } else if (SP::V4FPRegsRegClass.hasSubClassEq(RC)) {
+    /*[S64fx]*/
+    assert(Subtarget.isACE());
+    BuildMI(MBB, I, DL, get(SP::V4LDFri), DestReg)
+      .addFrameIndex(FI).addImm(0).addMemOperand(MMO);
+  } else if (SP::V4DFPRegsRegClass.hasSubClassEq(RC)) {
+    /*[S64fx]*/
+    assert(Subtarget.isACE());
+    BuildMI(MBB, I, DL, get(SP::V4LDDri), DestReg)
+      .addFrameIndex(FI).addImm(0).addMemOperand(MMO);
+  }
+ else
     llvm_unreachable("Can't load this register from stack slot");
 }
 
@@ -503,4 +616,103 @@ bool SparcInstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   }
   }
   return false;
+}
+
+// [S64fx] Checks all ones.  See the code ISD::isBuildVectorAllOnes().
+
+bool llvm::isAllOnes(SDNode* N) {
+  if (N->getNumValues() > 0 && N->getValueType(0).isSimple()) {
+    unsigned sz = N->getValueType(0).getSizeInBits();
+    ConstantSDNode* n0 = dyn_cast<ConstantSDNode>(N);
+    if (n0 != 0) {
+      return (n0->getAPIntValue().countTrailingOnes() == sz);
+    } else {
+      ConstantFPSDNode* n1 = dyn_cast<ConstantFPSDNode>(N);
+      if (n1 != 0) {
+        return (n1->getValueAPF().bitcastToAPInt().countTrailingOnes() == sz);
+      } else {
+        return false;
+      }
+    }
+  } else {
+    return false;
+  }
+}
+
+// [S64fx] Moves from an FP (single-precision) register.  The source
+// is a V9 register and the destination is an S64fx extended register.
+// It is not simple, because the odd-numbered registers are
+// inaccessible from the S64fx extended instructions, while the 16
+// even-numbered V9 registers (and conversely the first 16 S64fx
+// registers) are accessible from both the V9 and the S64fx
+// instructions.  Note that even-numbered regisers are used for return
+// values, and odd ones for arguments.  It adds instructions even if a
+// source and a destination are the same, as required by
+// ExpandPostRA::TransferImplicitOperands() (see the call site).  Also
+// note BuildMI() inserts in the front.
+
+void SparcInstrInfo::
+copyPhysRegFPInArgs(MachineBasicBlock &MBB,
+                    MachineBasicBlock::iterator I,
+                    const DebugLoc &DL, unsigned DestReg,
+                    unsigned SrcReg, bool KillSrc) const {
+  assert(SP::F0 <= SrcReg && SrcReg <= SP::F31);
+  if (((SrcReg - SP::F0) & 1) == 0) {
+    // Movable by an S64fx instruction.
+    unsigned src = (SP::Fd0 + ((SrcReg - SP::F0) / 2));
+    bool some_insn_needed_later = (I->getNumOperands() > 2);
+    if (src != DestReg || some_insn_needed_later) {
+      BuildMI(MBB, I, DL, get(SP::FMOVSx), DestReg)
+        .addReg(src, getKillRegState(KillSrc));
+    }
+  } else {
+    if (SP::Fd0 <= DestReg && DestReg <= SP::Fd15) {
+      // Movable by a V9 instruction.
+      unsigned dst = (SP::F0 + ((DestReg - SP::Fd0) * 2));
+      BuildMI(MBB, I, DL, get(SP::FMOVS), dst)
+        .addReg(SrcReg, getKillRegState(KillSrc));
+    } else {
+      // Move by a V9 instruction, then by an S64fx instruction.
+      unsigned srcstep = (SP::Fd0 + ((SrcReg - SP::F0 - 1) / 2));
+      BuildMI(MBB, I, DL, get(SP::FMOVSx), DestReg)
+        .addReg(srcstep, getKillRegState(KillSrc));
+      BuildMI(MBB, I, DL, get(SP::FMOVS), (SrcReg - 1))
+        .addReg(SrcReg, getKillRegState(KillSrc));
+    }
+  }
+}
+
+// [S64fx] Moves to an FP (single-precision) register. The source is
+// an S64fx extended register and the destination is a V9 register.
+// See copyPhysRegFPInArgs().
+
+void SparcInstrInfo::
+copyPhysRegFPOutArgs(MachineBasicBlock &MBB,
+                     MachineBasicBlock::iterator I,
+                     const DebugLoc &DL, unsigned DestReg,
+                     unsigned SrcReg, bool KillSrc) const {
+  assert(SP::F0 <= DestReg && DestReg <= SP::F31);
+  if (((DestReg - SP::F0) & 1) == 0) {
+    // Movable by an S64fx instruction.
+    unsigned dst = (SP::Fd0 + ((DestReg - SP::F0) / 2));
+    bool some_insn_needed_later = (I->getNumOperands() > 2);
+    if (SrcReg != dst || some_insn_needed_later) {
+      BuildMI(MBB, I, DL, get(SP::FMOVSx), dst)
+        .addReg(SrcReg, getKillRegState(KillSrc));
+    }
+  } else {
+    if (SP::Fd0 <= SrcReg && SrcReg <= SP::Fd15) {
+      // Movable by a V9 instruction.
+      unsigned src = (SP::F0 + ((SrcReg - SP::Fd0) * 2));
+      BuildMI(MBB, I, DL, get(SP::FMOVS), DestReg)
+        .addReg(src, getKillRegState(KillSrc));
+    } else {
+      // Move by an S64fx instruction, then by a V9 instruction.
+      unsigned dststep = (SP::Fd0 + ((DestReg - SP::F0 - 1) / 2));
+      BuildMI(MBB, I, DL, get(SP::FMOVS), DestReg)
+        .addReg((DestReg - 1), getKillRegState(KillSrc));
+      BuildMI(MBB, I, DL, get(SP::FMOVSx), dststep)
+        .addReg(SrcReg, getKillRegState(KillSrc));
+    }
+  }
 }

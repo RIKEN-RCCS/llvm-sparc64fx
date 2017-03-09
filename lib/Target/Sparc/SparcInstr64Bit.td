@@ -148,17 +148,17 @@ defm ORX     : F3_12<"or",  0b000010, or,  I64Regs, i64, i64imm>;
 defm XORX    : F3_12<"xor", 0b000011, xor, I64Regs, i64, i64imm>;
 
 def ANDXNrr  : F3_1<2, 0b000101,
-                 (outs I64Regs:$dst), (ins I64Regs:$b, I64Regs:$c),
-                 "andn $b, $c, $dst",
-                 [(set i64:$dst, (and i64:$b, (not i64:$c)))]>;
+                 (outs I64Regs:$rd), (ins I64Regs:$rs1, I64Regs:$rs2),
+                 "andn $rs1, $rs2, $rd",
+                 [(set i64:$rd, (and i64:$rs1, (not i64:$rs2)))]>;
 def ORXNrr   : F3_1<2, 0b000110,
-                 (outs I64Regs:$dst), (ins I64Regs:$b, I64Regs:$c),
-                 "orn $b, $c, $dst",
-                 [(set i64:$dst, (or i64:$b, (not i64:$c)))]>;
+                 (outs I64Regs:$rd), (ins I64Regs:$rs1, I64Regs:$rs2),
+                 "orn $rs1, $rs2, $rd",
+                 [(set i64:$rd, (or i64:$rs1, (not i64:$rs2)))]>;
 def XNORXrr  : F3_1<2, 0b000111,
-                   (outs I64Regs:$dst), (ins I64Regs:$b, I64Regs:$c),
-                   "xnor $b, $c, $dst",
-                   [(set i64:$dst, (not (xor i64:$b, i64:$c)))]>;
+                   (outs I64Regs:$rd), (ins I64Regs:$rs1, I64Regs:$rs2),
+                   "xnor $rs1, $rs2, $rd",
+                   [(set i64:$rd, (not (xor i64:$rs1, i64:$rs2)))]>;
 
 defm ADDX    : F3_12<"add", 0b000000, add, I64Regs, i64, i64imm>;
 defm SUBX    : F3_12<"sub", 0b000100, sub, I64Regs, i64, i64imm>;
@@ -171,9 +171,9 @@ def TLS_ADDXrr : F3_1<2, 0b000000, (outs I64Regs:$rd),
 
 // "LEA" form of add
 def LEAX_ADDri : F3_2<2, 0b000000,
-                     (outs I64Regs:$dst), (ins MEMri:$addr),
-                     "add ${addr:arith}, $dst",
-                     [(set iPTR:$dst, ADDRri:$addr)]>;
+                     (outs I64Regs:$rd), (ins MEMri:$addr),
+                     "add ${addr:arith}, $rd",
+                     [(set iPTR:$rd, ADDRri:$addr)]>;
 }
 
 def : Pat<(SPcmpicc i64:$a, i64:$b), (CMPrr $a, $b)>;
@@ -194,7 +194,7 @@ def MULXrr : F3_1<2, 0b001001,
                   "mulx $rs1, $rs2, $rd",
                   [(set i64:$rd, (mul i64:$rs1, i64:$rs2))]>;
 def MULXri : F3_2<2, 0b001001,
-                  (outs IntRegs:$rd), (ins IntRegs:$rs1, i64imm:$simm13),
+                  (outs I64Regs:$rd), (ins I64Regs:$rs1, i64imm:$simm13),
                   "mulx $rs1, $simm13, $rd",
                   [(set i64:$rd, (mul i64:$rs1, (i64 simm13:$simm13)))]>;
 
@@ -205,7 +205,7 @@ def SDIVXrr : F3_1<2, 0b101101,
                    "sdivx $rs1, $rs2, $rd",
                    [(set i64:$rd, (sdiv i64:$rs1, i64:$rs2))]>;
 def SDIVXri : F3_2<2, 0b101101,
-                   (outs IntRegs:$rd), (ins IntRegs:$rs1, i64imm:$simm13),
+                   (outs I64Regs:$rd), (ins I64Regs:$rs1, i64imm:$simm13),
                    "sdivx $rs1, $simm13, $rd",
                    [(set i64:$rd, (sdiv i64:$rs1, (i64 simm13:$simm13)))]>;
 
@@ -214,7 +214,7 @@ def UDIVXrr : F3_1<2, 0b001101,
                    "udivx $rs1, $rs2, $rd",
                    [(set i64:$rd, (udiv i64:$rs1, i64:$rs2))]>;
 def UDIVXri : F3_2<2, 0b001101,
-                   (outs IntRegs:$rd), (ins IntRegs:$rs1, i64imm:$simm13),
+                   (outs I64Regs:$rd), (ins I64Regs:$rs1, i64imm:$simm13),
                    "udivx $rs1, $simm13, $rd",
                    [(set i64:$rd, (udiv i64:$rs1, (i64 simm13:$simm13)))]>;
 } // hasSideEffects = 1
@@ -241,9 +241,9 @@ let DecoderMethod = "DecodeLoadInt" in
 
 let mayLoad = 1, isCodeGenOnly = 1, isAsmParserOnly = 1 in
   def TLS_LDXrr : F3_1<3, 0b001011,
-                       (outs IntRegs:$dst), (ins MEMrr:$addr, TLSSym:$sym),
-                       "ldx [$addr], $dst, $sym",
-                       [(set i64:$dst,
+                       (outs IntRegs:$rd), (ins MEMrr:$addr, TLSSym:$sym),
+                       "ldx [$addr], $rd, $sym",
+                       [(set i64:$rd,
                            (tlsld ADDRrr:$addr, tglobaltlsaddr:$sym))]>;
 
 // Extending loads to i64.
@@ -311,6 +311,9 @@ let Predicates = [Is64Bit] in {
 let Uses = [ICC], cc = 0b10 in
   defm BPX : IPredBranch<"%xcc", [(SPbrxcc bb:$imm19, imm:$cond)]>;
 
+// [S64fx] Let MOVXCCrr/ri take IntRegs instead of I64Regs to match
+// MOVICCrr/ri, so as to be accepted by a common alias definition.
+
 // Conditional moves on %xcc.
 let Uses = [ICC], Constraints = "$f = $rd" in {
 let intcc = 1, cc = 0b10 in {
@@ -326,14 +329,14 @@ def MOVXCCri : F4_2<0b101100, (outs IntRegs:$rd),
                        (SPselectxcc simm11:$simm11, i32:$f, imm:$cond))]>;
 } // cc
 
-let intcc = 1, opf_cc = 0b10 in {
+let intcc = 1, opf_cc = 0b10, Predicates = [Is64Bit, NoACE] in {
 def FMOVS_XCC : F4_3<0b110101, 0b000001, (outs FPRegs:$rd),
                       (ins FPRegs:$rs2, FPRegs:$f, CCOp:$cond),
                       "fmovs$cond %xcc, $rs2, $rd",
                       [(set f32:$rd,
                        (SPselectxcc f32:$rs2, f32:$f, imm:$cond))]>;
-def FMOVD_XCC : F4_3<0b110101, 0b000010, (outs DFPRegs:$rd),
-                      (ins DFPRegs:$rs2, DFPRegs:$f, CCOp:$cond),
+def FMOVD_XCC : F4_3<0b110101, 0b000010, (outs DFPbRegs:$rd),
+                      (ins DFPbRegs:$rs2, DFPbRegs:$f, CCOp:$cond),
                       "fmovd$cond %xcc, $rs2, $rd",
                       [(set f64:$rd,
                        (SPselectxcc f64:$rs2, f64:$f, imm:$cond))]>;
@@ -382,7 +385,7 @@ defm : bpr_alias<"brgez", BPGEZnapt, BPGEZapt>;
 // Move integer register on register condition (MOVr).
 multiclass MOVR< bits<3> rcond,  string OpcStr> {
   def rr : F4_4r<0b101111, 0b00000, rcond, (outs I64Regs:$rd),
-                   (ins I64Regs:$rs1, IntRegs:$rs2),
+                   (ins I64Regs:$rs1, I64Regs:$rs2),
                    !strconcat(OpcStr, " $rs1, $rs2, $rd"), []>;
 
   def ri : F4_4i<0b101111, rcond, (outs I64Regs:$rd),
@@ -390,10 +393,12 @@ multiclass MOVR< bits<3> rcond,  string OpcStr> {
                    !strconcat(OpcStr, " $rs1, $simm10, $rd"), []>;
 }
 
+// [S64fx] MOVRNZ is defined in SparcInstrS64fx.td.
+
 defm MOVRRZ  : MOVR<0b001, "movrz">;
 defm MOVRLEZ : MOVR<0b010, "movrlez">;
 defm MOVRLZ  : MOVR<0b011, "movrlz">;
-defm MOVRNZ  : MOVR<0b101, "movrnz">;
+//defm MOVRNZ  : MOVR<0b101, "movrnz">;
 defm MOVRGZ  : MOVR<0b110, "movrgz">;
 defm MOVRGEZ : MOVR<0b111, "movrgez">;
 
@@ -401,24 +406,26 @@ defm MOVRGEZ : MOVR<0b111, "movrgez">;
 multiclass FMOVR<bits<3> rcond, string OpcStr> {
 
   def S : F4_4r<0b110101, 0b00101, rcond,
-                (outs FPRegs:$rd), (ins I64Regs:$rs1, FPRegs:$rs2),
+                (outs FPRegs:$rd), (ins I64bRegs:$rs1, FPRegs:$rs2),
                 !strconcat(!strconcat("fmovrs", OpcStr)," $rs1, $rs2, $rd"),
                 []>;
   def D : F4_4r<0b110101, 0b00110, rcond,
-                (outs FPRegs:$rd), (ins I64Regs:$rs1, FPRegs:$rs2),
+                (outs DFPRegs:$rd), (ins I64bRegs:$rs1, DFPRegs:$rs2),
                 !strconcat(!strconcat("fmovrd", OpcStr)," $rs1, $rs2, $rd"),
                 []>;
   def Q : F4_4r<0b110101, 0b00111, rcond,
-                (outs FPRegs:$rd), (ins I64Regs:$rs1, FPRegs:$rs2),
+                (outs QFPRegs:$rd), (ins I64bRegs:$rs1, QFPRegs:$rs2),
                 !strconcat(!strconcat("fmovrq", OpcStr)," $rs1, $rs2, $rd"),
                 []>, Requires<[HasHardQuad]>;
 }
+
+// [S64fx] FMOVRNZ is defined in SparcInstrS64fx.td.
 
 let Predicates = [HasV9] in {
   defm FMOVRZ   : FMOVR<0b001, "z">;
   defm FMOVRLEZ : FMOVR<0b010, "lez">;
   defm FMOVRLZ  : FMOVR<0b011, "lz">;
-  defm FMOVRNZ  : FMOVR<0b101, "nz">;
+  //defm FMOVRNZ  : FMOVR<0b101, "nz">;
   defm FMOVRGZ  : FMOVR<0b110, "gz">;
   defm FMOVRGEZ : FMOVR<0b111, "gez">;
 }
@@ -427,37 +434,39 @@ let Predicates = [HasV9] in {
 // 64-bit Floating Point Conversions.
 //===----------------------------------------------------------------------===//
 
-let Predicates = [Is64Bit] in {
-
+let Predicates = [Is64Bit, NoACE] in
 def FXTOS : F3_3u<2, 0b110100, 0b010000100,
                  (outs FPRegs:$rd), (ins DFPRegs:$rs2),
                  "fxtos $rs2, $rd",
                  [(set FPRegs:$rd, (SPxtof DFPRegs:$rs2))]>;
+let Predicates = [Is64Bit] in
 def FXTOD : F3_3u<2, 0b110100, 0b010001000,
                  (outs DFPRegs:$rd), (ins DFPRegs:$rs2),
                  "fxtod $rs2, $rd",
                  [(set DFPRegs:$rd, (SPxtof DFPRegs:$rs2))]>;
+let Predicates = [Is64Bit] in
 def FXTOQ : F3_3u<2, 0b110100, 0b010001100,
                  (outs QFPRegs:$rd), (ins DFPRegs:$rs2),
                  "fxtoq $rs2, $rd",
                  [(set QFPRegs:$rd, (SPxtof DFPRegs:$rs2))]>,
                  Requires<[HasHardQuad]>;
 
+let Predicates = [Is64Bit, NoACE] in
 def FSTOX : F3_3u<2, 0b110100, 0b010000001,
                  (outs DFPRegs:$rd), (ins FPRegs:$rs2),
                  "fstox $rs2, $rd",
                  [(set DFPRegs:$rd, (SPftox FPRegs:$rs2))]>;
+let Predicates = [Is64Bit] in
 def FDTOX : F3_3u<2, 0b110100, 0b010000010,
                  (outs DFPRegs:$rd), (ins DFPRegs:$rs2),
                  "fdtox $rs2, $rd",
                  [(set DFPRegs:$rd, (SPftox DFPRegs:$rs2))]>;
+let Predicates = [Is64Bit] in
 def FQTOX : F3_3u<2, 0b110100, 0b010000011,
                  (outs DFPRegs:$rd), (ins QFPRegs:$rs2),
                  "fqtox $rs2, $rd",
                  [(set DFPRegs:$rd, (SPftox QFPRegs:$rs2))]>,
                  Requires<[HasHardQuad]>;
-
-} // Predicates = [Is64Bit]
 
 def : Pat<(SPselectxcc i64:$t, i64:$f, imm:$cond),
           (MOVXCCrr $t, $f, imm:$cond)>;
@@ -489,7 +498,7 @@ def SETHIXi : F2_1<0b100,
 let Predicates = [Is64Bit], Constraints = "$swap = $rd", asi = 0b10000000 in {
   def CASXrr: F3_1_asi<3, 0b111110,
                 (outs I64Regs:$rd), (ins I64Regs:$rs1, I64Regs:$rs2,
-                                     I64Regs:$swap),
+                                      I64Regs:$swap),
                  "casx [$rs1], $rs2, $rd",
                  [(set i64:$rd,
                      (atomic_cmp_swap_64 i64:$rs1, i64:$rs2, i64:$swap))]>;

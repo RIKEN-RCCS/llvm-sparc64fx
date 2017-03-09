@@ -14,6 +14,7 @@
 
 #include "Sparc.h"
 #include "SparcSubtarget.h"
+#include "SparcTargetMachine.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -216,6 +217,12 @@ Filler::findDelayInstr(MachineBasicBlock &MBB,
     if (I->hasUnmodeledSideEffects() || I->isInlineAsm() || I->isPosition() ||
         I->hasDelaySlot() || I->isBundledWithSucc())
       break;
+
+    // [S64fx] Prefixed instructions cannot be in delay-slots.
+    const MachineFunction& mf = *MBB.getParent();
+    if (hasS64fxXARBits(*I, mf)) {
+      break;
+    }
 
     if (delayHasHazard(I, sawLoad, sawStore, RegDefs, RegUses)) {
       insertDefsUses(I, RegDefs, RegUses);
@@ -498,6 +505,12 @@ bool Filler::tryCombineRestoreWithPrevInst(MachineBasicBlock &MBB,
   // It cannot be combined with a bundled instruction.
   if (PrevInst->isBundledWithSucc())
     return false;
+
+  // [S64fx] Prefixed instructions cannot be in delay-slots.
+  const MachineFunction& mf = *MBB.getParent();
+  if (hasS64fxXARBits(*PrevInst, mf)) {
+    return false;
+  }
 
   const TargetInstrInfo *TII = Subtarget->getInstrInfo();
 

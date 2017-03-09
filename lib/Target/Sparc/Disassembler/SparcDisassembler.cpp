@@ -29,17 +29,37 @@ typedef MCDisassembler::DecodeStatus DecodeStatus;
 
 namespace {
 
+struct SparcXARRecord {
+  uint64_t f_bits = 0;
+  uint64_t s_bits = 0;
+  uint64_t pc = 0;
+};
+
 /// A disassembler class for Sparc.
 class SparcDisassembler : public MCDisassembler {
 public:
   SparcDisassembler(const MCSubtargetInfo &STI, MCContext &Ctx)
-      : MCDisassembler(STI, Ctx) {}
-  virtual ~SparcDisassembler() {}
+      : MCDisassembler(STI, Ctx) {
+    xar = new SparcXARRecord();
+  }
+  virtual ~SparcDisassembler() {
+    delete xar;
+  }
 
   DecodeStatus getInstruction(MCInst &Instr, uint64_t &Size,
                               ArrayRef<uint8_t> Bytes, uint64_t Address,
                               raw_ostream &VStream,
                               raw_ostream &CStream) const override;
+
+  // [S64fx] Record of a previously seen SXAR prefix instruction.
+  // xar->pc is the address of the instruction.  SparcXARRecord is
+  // separated from this class to make getInstruction()
+  // const-qualified.
+
+  struct SparcXARRecord* xar;
+
+  DecodeStatus fixInsnWithXAR(uint64_t& xarinsn, uint64_t insn,
+                              uint64_t Address) const;
 };
 }
 
@@ -74,6 +94,7 @@ static const unsigned IntRegDecoderTable[] = {
   SP::I0,  SP::I1,  SP::I2,  SP::I3,
   SP::I4,  SP::I5,  SP::I6,  SP::I7 };
 
+#if 0 /*[S64fx]*/
 static const unsigned FPRegDecoderTable[] = {
   SP::F0,   SP::F1,   SP::F2,   SP::F3,
   SP::F4,   SP::F5,   SP::F6,   SP::F7,
@@ -83,7 +104,9 @@ static const unsigned FPRegDecoderTable[] = {
   SP::F20,  SP::F21,  SP::F22,  SP::F23,
   SP::F24,  SP::F25,  SP::F26,  SP::F27,
   SP::F28,  SP::F29,  SP::F30,  SP::F31 };
+#endif /*[S64fx]*/
 
+#if 0 /*[S64fx]*/
 static const unsigned DFPRegDecoderTable[] = {
   SP::D0,   SP::D16,  SP::D1,   SP::D17,
   SP::D2,   SP::D18,  SP::D3,   SP::D19,
@@ -93,7 +116,9 @@ static const unsigned DFPRegDecoderTable[] = {
   SP::D10,  SP::D26,  SP::D11,  SP::D27,
   SP::D12,  SP::D28,  SP::D13,  SP::D29,
   SP::D14,  SP::D30,  SP::D15,  SP::D31 };
+#endif /*[S64fx]*/
 
+#if 0 /*[S64fx]*/
 static const unsigned QFPRegDecoderTable[] = {
   SP::Q0,  SP::Q8,   ~0U,  ~0U,
   SP::Q1,  SP::Q9,   ~0U,  ~0U,
@@ -103,6 +128,7 @@ static const unsigned QFPRegDecoderTable[] = {
   SP::Q5,  SP::Q13,  ~0U,  ~0U,
   SP::Q6,  SP::Q14,  ~0U,  ~0U,
   SP::Q7,  SP::Q15,  ~0U,  ~0U } ;
+#endif /*[S64fx]*/
 
 static const unsigned FCCRegDecoderTable[] = {
   SP::FCC0, SP::FCC1, SP::FCC2, SP::FCC3 };
@@ -149,65 +175,140 @@ static const uint16_t CPPairDecoderTable[] = {
   SP::C24_C25, SP::C26_C27, SP::C28_C29, SP::C30_C31
 };
 
-static DecodeStatus DecodeIntRegsRegisterClass(MCInst &Inst,
-                                               unsigned RegNo,
-                                               uint64_t Address,
-                                               const void *Decoder) {
-  if (RegNo > 31)
+// [S64fx] S64fx has 64 integer registers.
+
+static DecodeStatus
+DecodeI64RegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                           uint64_t Address, const void *Decoder) {
+  if (RegNo > 64) {
     return MCDisassembler::Fail;
-  unsigned Reg = IntRegDecoderTable[RegNo];
+  }
+  unsigned Reg;
+  if (RegNo <= 31) {
+    Reg = IntRegDecoderTable[RegNo];
+  } else {
+    Reg = (SP::XG0 + (RegNo - 32));
+  }
   Inst.addOperand(MCOperand::createReg(Reg));
   return MCDisassembler::Success;
 }
 
-static DecodeStatus DecodeI64RegsRegisterClass(MCInst &Inst,
-                                               unsigned RegNo,
-                                               uint64_t Address,
-                                               const void *Decoder) {
-  if (RegNo > 31)
+static DecodeStatus
+DecodeIntRegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                           uint64_t Address, const void *Decoder) {
+  return DecodeI64RegsRegisterClass(Inst, RegNo, Address,Decoder);
+}
+
+static DecodeStatus DecodeIntbRegsRegisterClass
+(MCInst &Inst, unsigned RegNo, uint64_t Address, const void *Decoder) {
+  if (RegNo > 31) {
     return MCDisassembler::Fail;
-  unsigned Reg = IntRegDecoderTable[RegNo];
+  }
+  return DecodeI64RegsRegisterClass(Inst, RegNo, Address, Decoder);
+}
+
+static DecodeStatus
+DecodeI64bRegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                            uint64_t Address, const void *Decoder) {
+  if (RegNo > 31) {
+    return MCDisassembler::Fail;
+  }
+  return DecodeI64RegsRegisterClass(Inst, RegNo, Address, Decoder);
+}
+
+#define FP_REGNO_UNSHUFFLE(X) ((((X) & 1) << 5) || (((X) >> 1) & 0xe))
+
+// [S64fx] S64fx has 256 single-precision FP registers.  These are not
+// the V9 registers, and the register numbers are shuffled.
+
+static DecodeStatus
+DecodeXFPRegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                           uint64_t Address, const void *Decoder) {
+  if (RegNo >= 256) {
+    return MCDisassembler::Fail;
+  }
+  unsigned xar = (RegNo >> 5);
+  unsigned xregno = FP_REGNO_UNSHUFFLE(RegNo);
+  unsigned Reg;
+  if (RegNo < 32) {
+    Reg = SP::Fd0 + ((xar << 5) | xregno);
+  } else {
+    Reg = SP::F0 + ((xar << 5) | xregno);
+  }
   Inst.addOperand(MCOperand::createReg(Reg));
   return MCDisassembler::Success;
 }
 
+// [S64fx] S64fx has 256 double-precision FP registers.
 
-static DecodeStatus DecodeFPRegsRegisterClass(MCInst &Inst,
-                                              unsigned RegNo,
-                                              uint64_t Address,
-                                              const void *Decoder) {
-  if (RegNo > 31)
+static DecodeStatus
+DecodeDFPRegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                           uint64_t Address, const void *Decoder) {
+  if (RegNo >= 256) {
     return MCDisassembler::Fail;
-  unsigned Reg = FPRegDecoderTable[RegNo];
+  }
+  unsigned xar = (RegNo >> 5);
+  unsigned xregno = FP_REGNO_UNSHUFFLE(RegNo);
+  unsigned Reg = SP::D0 + ((xar << 5) | xregno);
   Inst.addOperand(MCOperand::createReg(Reg));
   return MCDisassembler::Success;
 }
 
-
-static DecodeStatus DecodeDFPRegsRegisterClass(MCInst &Inst,
-                                               unsigned RegNo,
-                                               uint64_t Address,
-                                               const void *Decoder) {
-  if (RegNo > 31)
+static DecodeStatus
+DecodeFPRegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                          uint64_t Address, const void *Decoder) {
+  if (RegNo >= 32) {
     return MCDisassembler::Fail;
-  unsigned Reg = DFPRegDecoderTable[RegNo];
+  }
+  unsigned Reg = (SP::F0 + RegNo);
   Inst.addOperand(MCOperand::createReg(Reg));
   return MCDisassembler::Success;
 }
 
-
-static DecodeStatus DecodeQFPRegsRegisterClass(MCInst &Inst,
-                                               unsigned RegNo,
-                                               uint64_t Address,
-                                               const void *Decoder) {
-  if (RegNo > 31)
+static DecodeStatus
+DecodeDFPbRegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                            uint64_t Address, const void *Decoder) {
+  if (RegNo >= 32) {
     return MCDisassembler::Fail;
+  }
+  return DecodeDFPRegsRegisterClass(Inst, RegNo, Address, Decoder);
+}
 
-  unsigned Reg = QFPRegDecoderTable[RegNo];
-  if (Reg == ~0U)
+static DecodeStatus
+DecodeQFPRegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                           uint64_t Address, const void *Decoder) {
+  if (RegNo >= 16) {
     return MCDisassembler::Fail;
+  }
+  if ((RegNo & 2) != 0) {
+    return MCDisassembler::Fail;
+  }
+  unsigned xar = (RegNo >> 5);
+  unsigned xregno = FP_REGNO_UNSHUFFLE(RegNo);
+  unsigned Reg = SP::Q0 + (((xar << 5) | xregno) >> 1);
   Inst.addOperand(MCOperand::createReg(Reg));
   return MCDisassembler::Success;
+}
+
+static DecodeStatus
+DecodeFPe0RegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                            uint64_t Address, const void *Decoder) {
+  return DecodeFPRegsRegisterClass(Inst, RegNo, Address, Decoder);
+}
+
+static DecodeStatus
+DecodeDFPe0RegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                             uint64_t Address, const void *Decoder) {
+  return DecodeDFPRegsRegisterClass(Inst, RegNo, Address, Decoder);
+}
+
+static DecodeStatus
+DecodeFPDPRegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                            uint64_t Address, const void *Decoder) {
+  if (RegNo >= 32) {
+    return MCDisassembler::Fail;
+  }
+  return DecodeDFPRegsRegisterClass(Inst, RegNo, Address, Decoder);
 }
 
 static DecodeStatus DecodeCPRegsRegisterClass(MCInst &Inst,
@@ -273,6 +374,44 @@ static DecodeStatus DecodeCPPairRegisterClass(MCInst &Inst, unsigned RegNo,
   return MCDisassembler::Success;
 }
 
+// [S64fx] S64fx has 128 vector registers.
+
+static DecodeStatus
+DecodeV2FPRegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                            uint64_t Address, const void *Decoder) {
+  if (RegNo >= 128) {
+    return MCDisassembler::Fail;
+  }
+  unsigned Reg = SP::ZD0 + RegNo;
+  Inst.addOperand(MCOperand::createReg(Reg));
+  return MCDisassembler::Success;
+}
+
+static DecodeStatus
+DecodeV4FPRegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                            uint64_t Address, const void *Decoder) {
+  return DecodeV2FPRegsRegisterClass(Inst, RegNo, Address, Decoder);
+}
+
+static DecodeStatus
+DecodeV2DFPRegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                             uint64_t Address, const void *Decoder) {
+  if (RegNo >= 128) {
+    return MCDisassembler::Fail;
+  }
+  unsigned xar = (RegNo >> 5);
+  unsigned xregno = FP_REGNO_UNSHUFFLE(RegNo);
+  unsigned Reg = SP::ZD0 + ((xar << 5) | xregno);
+  Inst.addOperand(MCOperand::createReg(Reg));
+  return MCDisassembler::Success;
+}
+
+static DecodeStatus
+DecodeV4DFPRegsRegisterClass(MCInst &Inst, unsigned RegNo,
+                             uint64_t Address, const void *Decoder) {
+  return DecodeV2DFPRegsRegisterClass(Inst, RegNo, Address, Decoder);
+}
+
 static DecodeStatus DecodeLoadInt(MCInst &Inst, unsigned insn, uint64_t Address,
                                   const void *Decoder);
 static DecodeStatus DecodeLoadIntPair(MCInst &Inst, unsigned insn, uint64_t Address,
@@ -335,6 +474,59 @@ static DecodeStatus readInstruction32(ArrayRef<uint8_t> Bytes, uint64_t Address,
   return MCDisassembler::Success;
 }
 
+// [S64fx] Records the occurrence of the SXAR prefix instruction, and
+// modifies the following instructions.  It assumes getInstruction()
+// is called in the proper ordering.  It cannot handle prefixes in
+// delay-slots.
+
+DecodeStatus SparcDisassembler::
+fixInsnWithXAR(uint64_t& xarinsn, uint64_t insn, uint64_t Address) const {
+  if (((insn >> 30) & 3) == 0 && ((insn >> 22) & 7) == 7) {
+    // Record the SXAR prefix instruction for later reference.
+    unsigned cmb = (insn >> 29) & 1;
+    unsigned f_simd = ((((insn >> 28) & 1) != 0) ? 3 : 0);
+    unsigned f_urd = (insn >> 25) & 7;
+    unsigned f_urs1 = (insn >> 19) & 7;
+    unsigned f_urs2 = (insn >> 16) & 7;
+    unsigned f_urs3 = (insn >> 13) & 7;
+    xar->f_bits = ((f_simd << 12) | (f_urd << 9)
+                   | (f_urs1 << 6) | (f_urs2 << 3) | f_urs3);
+    if (cmb == 1) {
+      unsigned s_simd = ((((insn >> 12) & 1) != 0) ? 3 : 0);
+      unsigned s_urd = (insn >> 9) & 7;
+      unsigned s_urs1 = (insn >> 6) & 7;
+      unsigned s_urs2 = (insn >> 3) & 7;
+      unsigned s_urs3 = (insn >> 0) & 7;
+      xar->s_bits = ((s_simd << 12) | (s_urd << 9)
+                     | (s_urs1 << 6) | (s_urs2 << 3) | s_urs3);
+    } else {
+      xar->s_bits = 0;
+    }
+    xar->pc = Address;
+    if (xar->f_bits == 0 || (cmb == 1 && xar->s_bits == 0)) {
+      // Empty SXAR is strange.
+      return MCDisassembler::Fail;
+    }
+    xarinsn = insn;
+  } else if (xar->f_bits != 0 && (xar->pc + 4) == Address) {
+    // Modify the instruction with the recorded SXAR prefix.
+    xarinsn = (insn | (xar->f_bits << 32));
+    xar->f_bits = 0;
+  } else if (xar->s_bits != 0 && (xar->pc + 8) == Address) {
+    // Modify the instruction with the recorded SXAR prefix.
+    xarinsn = (insn | (xar->s_bits << 32));
+    xar->s_bits = 0;
+  } else {
+    xarinsn = insn;
+    xar->f_bits = 0;
+    xar->s_bits = 0;
+  }
+  if (xar->f_bits == 0 && xar->s_bits == 0) {
+    xar->pc = 0;
+  }
+  return MCDisassembler::Success;
+}
+
 DecodeStatus SparcDisassembler::getInstruction(MCInst &Instr, uint64_t &Size,
                                                ArrayRef<uint8_t> Bytes,
                                                uint64_t Address,
@@ -348,20 +540,31 @@ DecodeStatus SparcDisassembler::getInstruction(MCInst &Instr, uint64_t &Size,
     return MCDisassembler::Fail;
 
   // Calling the auto-generated decoder function.
-  
-  if (STI.getFeatureBits()[Sparc::FeatureV9])
+
+  if (STI.getFeatureBits()[Sparc::FeatureACE1]
+      || STI.getFeatureBits()[Sparc::FeatureACE2]) {
+    // Handle the SXAR prefix instruction.
+    uint64_t xarinsn;
+    Result = this->fixInsnWithXAR(xarinsn, Insn, Address);
+    if (Result == MCDisassembler::Fail) {
+      return Result;
+    }
+    Result = decodeInstruction(DecoderTableSparcV948, Instr, xarinsn,
+                               Address, this, STI);
+  }
+  else if (STI.getFeatureBits()[Sparc::FeatureV9])
   {
-    Result = decodeInstruction(DecoderTableSparcV932, Instr, Insn, Address, this, STI);
+    Result = decodeInstruction(DecoderTableSparcV948, Instr, Insn, Address, this, STI);
   }
   else
   {
-    Result = decodeInstruction(DecoderTableSparcV832, Instr, Insn, Address, this, STI);      
+    Result = decodeInstruction(DecoderTableSparcV848, Instr, Insn, Address, this, STI);
   }
   if (Result != MCDisassembler::Fail)
     return Result;
-  
+
   Result =
-      decodeInstruction(DecoderTableSparc32, Instr, Insn, Address, this, STI);
+      decodeInstruction(DecoderTableSparc48, Instr, Insn, Address, this, STI);
 
   if (Result != MCDisassembler::Fail) {
     Size = 4;
@@ -660,7 +863,7 @@ static DecodeStatus DecodeTRAP(MCInst &MI, unsigned insn, uint64_t Address,
     if (status != MCDisassembler::Success)
       return status;
   }
-  
+
   // Decode CC
   MI.addOperand(MCOperand::createImm(cc));
 

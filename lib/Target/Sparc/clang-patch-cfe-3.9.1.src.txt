@@ -1,0 +1,33 @@
+diff --git a/lib/Basic/Targets.cpp b/lib/Basic/Targets.cpp
+index be5d4ad..5ecf5dc 100644
+--- a/lib/Basic/Targets.cpp
++++ b/lib/Basic/Targets.cpp
+@@ -6481,7 +6481,9 @@ public:
+     CK_LEON3_UT699,
+     CK_LEON3_GR712RC,
+     CK_LEON4,
+-    CK_LEON4_GR740
++    CK_LEON4_GR740,
++    CK_SPARC64_8,
++    CK_SPARC64_11
+   } CPU = CK_GENERIC;
+ 
+   enum CPUGeneration {
+@@ -6518,6 +6520,8 @@ public:
+     case CK_NIAGARA2:
+     case CK_NIAGARA3:
+     case CK_NIAGARA4:
++    case CK_SPARC64_8:
++    case CK_SPARC64_11:
+       return CG_V9;
+     }
+     llvm_unreachable("Unexpected CPU kind");
+@@ -6551,6 +6555,8 @@ public:
+         .Case("gr712rc", CK_LEON3_GR712RC)
+         .Case("leon4", CK_LEON4)
+         .Case("gr740", CK_LEON4_GR740)
++        .Case("s64fx8", CK_SPARC64_8)
++        .Case("s64fx11", CK_SPARC64_11)
+         .Default(CK_GENERIC);
+   }
+ 

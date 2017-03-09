@@ -50,7 +50,14 @@ namespace llvm {
 
       TLS_ADD,     // For Thread Local Storage (TLS).
       TLS_LD,
-      TLS_CALL
+      TLS_CALL,
+
+      /*[S64fx]*/
+
+      SETCC_F,
+      SELECT_F,
+      BOOL_MOVE_F,
+      BOOL_MOVE_I
     };
   }
 
@@ -59,9 +66,9 @@ namespace llvm {
   public:
     SparcTargetLowering(const TargetMachine &TM, const SparcSubtarget &STI);
     SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
-    
+
     bool useSoftFloat() const override;
-    
+
     /// computeKnownBitsForTargetNode - Determine which of the bits specified
     /// in Mask are known to be either zero or one and return them in the
     /// KnownZero/KnownOne bitsets.
@@ -217,6 +224,23 @@ namespace llvm {
                                         MachineBasicBlock *MBB) const;
     MachineBasicBlock *emitEHSjLjLongJmp(MachineInstr &MI,
                                          MachineBasicBlock *MBB) const;
+    /*[S64fx]*/
+
+    bool isFMAFasterThanFMulAndFAdd(EVT VT) const override;
+    bool isFPImmLegal(const APFloat &Imm, EVT VT) const override;
+    bool isSelectSupported(SelectSupportKind kind) const override;
+    bool enableAggressiveFMAFusion(EVT vt) const override;
+
+    SDValue lower_BUILD_VECTOR(SDValue op, SelectionDAG& dag) const;
+    SDValue lower_INSERT_VECTOR_ELT(SDValue op, SelectionDAG& dag) const;
+    SDValue lower_EXTRACT_VECTOR_ELT(SDValue op, SelectionDAG& dag) const;
+
+    SDValue lower_SELECT(SDValue op, SelectionDAG& dag) const;
+    SDValue lower_SETCC(SDValue op, SelectionDAG& dag) const;
+    //SDValue lower_VSELECT(SDValue op, SelectionDAG& dag) const;
+
+    void setS64fxFPOperationActions(MVT vt);
+    void setS64fxI1OperationActions(MVT vt);
   };
 } // end namespace llvm
 

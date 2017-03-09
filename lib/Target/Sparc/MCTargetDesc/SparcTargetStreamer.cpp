@@ -44,3 +44,13 @@ SparcTargetELFStreamer::SparcTargetELFStreamer(MCStreamer &S)
 MCELFStreamer &SparcTargetELFStreamer::getStreamer() {
   return static_cast<MCELFStreamer &>(Streamer);
 }
+
+// [S64fx] Sets the HPC-ACE flag bit in ELF header.
+/*AHO*/
+
+//void SparcTargetELFStreamer::reset() {
+//SparcTargetStreamer::reset();
+//MCTargetStreamer& ts = *getTargetStreamer();
+//ts.reset();
+//getAssembler().setELFHeaderEFlags(ELF::EF_ARM_EABI_VER5);
+//}

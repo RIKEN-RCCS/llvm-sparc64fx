@@ -163,5 +163,12 @@ namespace llvm {
     return ~LO10(~imm);
   }
 
+  // [S64fx] A marker to suppress generating assembler pseudo-op
+  // ".cfi_personality" and ".cfi_lsda", which are not accepted by old
+  // gas-2.17.
+
+  extern bool SparcS64fxUsesOldAsm;
+
 }  // end namespace llvm
+
 #endif

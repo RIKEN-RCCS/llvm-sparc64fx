@@ -108,6 +108,13 @@ def RetCC_Sparc32 : CallingConv<[
 // Function return values are passed exactly like function arguments, except a
 // struct up to 32 bytes in size can be returned in registers.
 
+// [S64fx] Subtarget discriminator for optional modification.
+
+class CCIfSubtarget<string F, CCAction A>
+  : CCIf<!strconcat("(static_cast<const SparcSubtarget&>"
+                    "(State.getMachineFunction().getSubtarget())).", F),
+         A>;
+
 // Function arguments AND most return values.
 def CC_Sparc64 : CallingConv<[
   // The frontend uses the inreg flag to indicate i32 and float arguments from
@@ -117,6 +124,18 @@ def CC_Sparc64 : CallingConv<[
 
   // All integers are promoted to i64 by the caller.
   CCIfType<[i32], CCPromoteToType<i64>>,
+
+  // [S64fx] Add arguments for intrinsics (Not sure, but they should
+  // be placed before CCCustom).
+
+  CCIfNotVarArg<CCIfType<[v2f32, v4f32],
+                          CCIfSubtarget<"isACE()",
+                          CCAssignToReg<[ZF0, ZF1, ZF2, ZF3,
+                                         ZF4, ZF5, ZF6, ZF7]>>>>,
+  CCIfNotVarArg<CCIfType<[v2f64, v4f64],
+                          CCIfSubtarget<"isACE()",
+                          CCAssignToReg<[ZD0, ZD1, ZD2, ZD3,
+                                         ZD4, ZD5, ZD6, ZD7]>>>>,
 
   // Custom assignment is required because stack space is reserved for all
   // arguments whether they are passed in registers or not.

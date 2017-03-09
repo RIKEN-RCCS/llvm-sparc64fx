@@ -36,6 +36,7 @@ public:
   const SparcSubtarget *getSubtargetImpl(const Function &) const override;
 
   // Pass Pipeline Configuration
+  TargetIRAnalysis getTargetIRAnalysis() override;
   TargetPassConfig *createPassConfig(PassManagerBase &PM) override;
   TargetLoweringObjectFile *getObjFileLowering() const override {
     return TLOF.get();
@@ -73,6 +74,10 @@ public:
                        Optional<Reloc::Model> RM, CodeModel::Model CM,
                        CodeGenOpt::Level OL);
 };
+
+/*[S64fx]*/
+FunctionPass *createS64fxPrefixPass(TargetMachine& TM);
+bool hasS64fxXARBits(const MachineInstr& MI, const MachineFunction& MF);
 
 } // end namespace llvm
 

@@ -25,6 +25,8 @@ add_llvm_target(SparcCodeGen
   SparcTargetMachine.cpp
   SparcMCInstLower.cpp
   SparcTargetObjectFile.cpp
+  SparcTargetTransformInfo.cpp
+  SparcS64fxPass.cpp
   )
 
 add_subdirectory(TargetInfo)

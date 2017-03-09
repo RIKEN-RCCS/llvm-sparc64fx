@@ -43,6 +43,13 @@ MCObjectWriter *createSparcELFObjectWriter(raw_pwrite_stream &OS, bool Is64Bit,
                                            bool IsLIttleEndian, uint8_t OSABI);
 } // End llvm namespace
 
+// [S64fx] SXAR instruction is a prefix, and encoding of it needs the
+// following instructions.  They are passed to code-emission as
+// arguments to an SXAR instruction.  The number of operands of the
+// following instructions are limited by four.
+
+#define SPARC_S64FX_SXAR_EMBEDDED_OPERANDS 4
+
 // Defines symbolic names for Sparc registers.  This defines a mapping from
 // register name to register number.
 //

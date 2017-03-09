@@ -71,6 +71,17 @@ namespace {
     void LowerGETPCXAndEmitMCInsts(const MachineInstr *MI,
                                    const MCSubtargetInfo &STI);
 
+    // [S64fx]
+    /*AHO*/
+
+    void EmitStartOfAsmFile(Module &M) override {
+      //const Triple &TT = TM.getTargetTriple();
+      //OutStreamer->EmitAssemblerFlag(0);
+      //std::unique_ptr<llvm::MCStreamer>
+      //auto &ObjStreamer = static_cast<MCObjectStreamer&>(*OutStreamer);
+      //((MCObjectStreamer*)OutStreamer)->getAssembler().setELFHeaderEFlags(0);
+    }
+
   };
 } // end of anonymous namespace
 
@@ -253,6 +264,10 @@ void SparcAsmPrinter::LowerGETPCXAndEmitMCInsts(const MachineInstr *MI,
   EmitADD(*OutStreamer, MCRegOP, RegO7, MCRegOP, STI);
 }
 
+// [S64fx] It prints the instructions in the bundles, where the
+// bundles are created for delay-slots and SXAR prefixes.  (Note
+// isInsideBundle() and isBundledWithPred() are identical).
+
 void SparcAsmPrinter::EmitInstruction(const MachineInstr *MI)
 {
 
@@ -265,9 +280,11 @@ void SparcAsmPrinter::EmitInstruction(const MachineInstr *MI)
     LowerGETPCXAndEmitMCInsts(MI, getSubtargetInfo());
     return;
   }
+
   MachineBasicBlock::const_instr_iterator I = MI->getIterator();
   MachineBasicBlock::const_instr_iterator E = MI->getParent()->instr_end();
   do {
+    assert(!(*I).getDesc().isPseudo());
     MCInst TmpInst;
     LowerSparcMachineInstrToMCInst(&*I, TmpInst, *this);
     EmitToStreamer(*OutStreamer, TmpInst);

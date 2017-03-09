@@ -91,11 +91,53 @@ static MCOperand LowerOperand(const MachineInstr *MI,
   return MCOperand();
 }
 
+// [S64fx] Lowers S64fx instructions, which are preceeded by
+// SXAR1/SXAR2 prefixes.  It embeds the successor instructions as
+// arguments in SXAR1/SXAR2 , because encoding needs them.  It adds an
+// opcode as an immediate value and four operands (fills with invalid
+// operands when less than four).  Thus, it assumes the number of the
+// operands of the real instructions is four or less.
+
+static void lowerS64fxMachineInstr(const MachineInstr* mi, MCInst& outmi,
+                                   AsmPrinter& ap) {
+  assert((mi->getOpcode() == SP::SXAR1 || mi->getOpcode() == SP::SXAR2)
+         && mi->isBundled());
+  outmi.setOpcode(mi->getOpcode());
+  auto s = mi->getIterator();
+  auto e = mi->getParent()->instr_end();
+  int ninstructions = ((mi->getOpcode() == SP::SXAR1) ? 1 : 2);
+  // Embed the real instructions as an SXAR operand.
+  for (int i = 0; i < ninstructions; i++) {
+    assert(s != e);
+    ++s;
+    const MachineInstr& mi0 = (*s);
+    assert(mi0.getOpcode() != SP::SXAR1 && mi0.getOpcode() != SP::SXAR2);
+    assert(mi0.isBundledWithPred());
+    MCInst mcinst0;
+    LowerSparcMachineInstrToMCInst(&mi0, mcinst0, ap);
+    MCOperand opc = MCOperand::createImm(mcinst0.getOpcode());
+    outmi.addOperand(opc);
+    assert(mcinst0.getNumOperands() <= SPARC_S64FX_SXAR_EMBEDDED_OPERANDS);
+    for (unsigned i = 0; i < SPARC_S64FX_SXAR_EMBEDDED_OPERANDS; ++i) {
+      if (i < mcinst0.getNumOperands()) {
+        outmi.addOperand(mcinst0.getOperand(i));
+      } else {
+        // Add invalid operands up to four slots.
+        outmi.addOperand(MCOperand());
+      }
+    }
+    assert(!(i == (ninstructions - 1)) || !mi0.isBundledWithSucc());
+  }
+}
+
 void llvm::LowerSparcMachineInstrToMCInst(const MachineInstr *MI,
                                           MCInst &OutMI,
                                           AsmPrinter &AP)
 {
-
+  // [S64fx] Switch to special handling of SXAR instructions.
+  if (MI->getOpcode() == SP::SXAR1 || MI->getOpcode() == SP::SXAR2) {
+    lowerS64fxMachineInstr(MI, OutMI, AP);
+  } else {
   OutMI.setOpcode(MI->getOpcode());
 
   for (unsigned i = 0, e = MI->getNumOperands(); i != e; ++i) {
@@ -104,5 +146,6 @@ void llvm::LowerSparcMachineInstrToMCInst(const MachineInstr *MI,
 
     if (MCOp.isValid())
       OutMI.addOperand(MCOp);
+  }
   }
 }

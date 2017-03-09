@@ -35,7 +35,7 @@ multiclass intcond_mov_alias<string cond, int condVal, string ccreg,
   // fmovd<cond> (%icc|%xcc), $rs2, $rd
   def : InstAlias<!strconcat(!strconcat(!strconcat("fmovd", cond), ccreg),
                              ", $rs2, $rd"),
-                  (fmovd DFPRegs:$rd, DFPRegs:$rs2, condVal)>;
+                  (fmovd DFPbRegs:$rd, DFPbRegs:$rs2, condVal)>;
 }
 
 // mov<cond> <ccreg> rs2, rd
@@ -57,7 +57,7 @@ multiclass fpcond_mov_alias<string cond, int condVal,
 
   // fmovd<cond> %fcc[0-3], $rs2, $rd
   def : InstAlias<!strconcat(!strconcat("fmovd", cond), " $cc, $rs2, $rd"),
-                  (fmovd DFPRegs:$rd, FCCRegs:$cc, DFPRegs:$rs2, condVal)>;
+                  (fmovd DFPbRegs:$rd, FCCRegs:$cc, DFPbRegs:$rs2, condVal)>;
 }
 
 // Instruction aliases for integer conditional branches and moves.
@@ -138,32 +138,32 @@ multiclass int_cond_alias<string cond, int condVal> {
 
   // t<cond> %icc,  rs => t<cond> %icc, G0 + rs
   def : InstAlias<!strconcat(!strconcat("t", cond), " %icc, $rs2"),
-                  (TICCrr G0, IntRegs:$rs2, condVal)>,
+                  (TICCrr G0, IntbRegs:$rs2, condVal)>,
                   Requires<[HasV9]>;
   // t<cond> %icc, rs1 + rs2
   def : InstAlias<!strconcat(!strconcat("t", cond), " %icc, $rs1 + $rs2"),
-                  (TICCrr IntRegs:$rs1, IntRegs:$rs2, condVal)>,
+                  (TICCrr IntbRegs:$rs1, IntbRegs:$rs2, condVal)>,
                   Requires<[HasV9]>;
 
 
   // t<cond> %xcc, rs => t<cond> %xcc, G0 + rs
   def : InstAlias<!strconcat(!strconcat("t", cond), " %xcc, $rs2"),
-                  (TXCCrr G0, IntRegs:$rs2, condVal)>,
+                  (TXCCrr G0, IntbRegs:$rs2, condVal)>,
                   Requires<[HasV9]>;
   // t<cond> %xcc, rs1 + rs2
   def : InstAlias<!strconcat(!strconcat("t", cond), " %xcc, $rs1 + $rs2"),
-                  (TXCCrr IntRegs:$rs1, IntRegs:$rs2, condVal)>,
+                  (TXCCrr IntbRegs:$rs1, IntbRegs:$rs2, condVal)>,
                   Requires<[HasV9]>;
 
 
   // t<cond> rs=> t<cond> %icc,  G0 + rs2
   //def : InstAlias<!strconcat(!strconcat("t", cond), " $rs2"),
-  //                (TICCrr G0, IntRegs:$rs2, condVal)>,
+  //                (TICCrr G0, IntbRegs:$rs2, condVal)>,
   //                Requires<[HasV9]>;
 
   // t<cond> rs1 + rs2 => t<cond> %icc, rs1 + rs2
   //def : InstAlias<!strconcat(!strconcat("t", cond), " $rs1 + $rs2"),
-  //                (TICCrr IntRegs:$rs1, IntRegs:$rs2, condVal)>,
+  //                (TICCrr IntbRegs:$rs1, IntbRegs:$rs2, condVal)>,
   //                Requires<[HasV9]>;
 
   // t<cond> %icc, imm => t<cond> %icc, G0 + imm
@@ -172,7 +172,7 @@ multiclass int_cond_alias<string cond, int condVal> {
                   Requires<[HasV9]>;
   // t<cond> %icc, rs1 + imm
   def : InstAlias<!strconcat(!strconcat("t", cond), " %icc, $rs1 + $imm"),
-                  (TICCri IntRegs:$rs1, i32imm:$imm, condVal)>,
+                  (TICCri IntbRegs:$rs1, i32imm:$imm, condVal)>,
                   Requires<[HasV9]>;
   // t<cond> %xcc, imm => t<cond> %xcc, G0 + imm
   def : InstAlias<!strconcat(!strconcat("t", cond), " %xcc, $imm"),
@@ -180,7 +180,7 @@ multiclass int_cond_alias<string cond, int condVal> {
                   Requires<[HasV9]>;
   // t<cond> %xcc, rs1 + imm
   def : InstAlias<!strconcat(!strconcat("t", cond), " %xcc, $rs1 + $imm"),
-                  (TXCCri IntRegs:$rs1, i32imm:$imm, condVal)>,
+                  (TXCCri IntbRegs:$rs1, i32imm:$imm, condVal)>,
                   Requires<[HasV9]>;
 
   // t<cond> imm => t<cond> G0 + imm
@@ -189,15 +189,15 @@ multiclass int_cond_alias<string cond, int condVal> {
 
   // t<cond> rs1 + imm => t<cond> rs1 + imm
   def : InstAlias<!strconcat(!strconcat("t", cond), " $rs1 + $imm"),
-                  (TRAPri IntRegs:$rs1, i32imm:$imm, condVal)>;
+                  (TRAPri IntbRegs:$rs1, i32imm:$imm, condVal)>;
 
   // t<cond> rs1 => t<cond> G0 + rs1
   def : InstAlias<!strconcat(!strconcat("t", cond), " $rs1"),
-                  (TRAPrr G0, IntRegs:$rs1, condVal)>;
+                  (TRAPrr G0, IntbRegs:$rs1, condVal)>;
 
   // t<cond> rs1 + rs2
   def : InstAlias<!strconcat(!strconcat("t", cond), " $rs1 + $rs2"),
-                  (TRAPrr IntRegs:$rs1, IntRegs:$rs2, condVal)>;
+                  (TRAPrr IntbRegs:$rs1, IntbRegs:$rs2, condVal)>;
 }
 
 
@@ -368,7 +368,7 @@ def : InstAlias<"save", (SAVErr G0, G0, G0)>;
 
 // set value, rd
 // (turns into a sequence of sethi+or, depending on the value)
-// def : InstAlias<"set $val, $rd", (ORri IntRegs:$rd, (SETHIi (HI22 imm:$val)), (LO10 imm:$val))>;
+// def : InstAlias<"set $val, $rd", (ORri IntbRegs:$rd, (SETHIi (HI22 imm:$val)), (LO10 imm:$val))>;
 def SET : AsmPseudoInst<(outs IntRegs:$rd), (ins i32imm:$val), "set $val, $rd">;
 
 // not rd -> xnor rd, %g0, rd

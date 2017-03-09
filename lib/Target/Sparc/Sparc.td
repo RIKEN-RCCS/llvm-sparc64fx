@@ -51,6 +51,15 @@ def FeatureSoftFloat
 //==== Features added predmoninantly for LEON subtarget support
 include "LeonFeatures.td"
 
+/*[S64fx]*/
+
+def FeatureACE1
+    : SubtargetFeature<"ace1", "IsACE1", "true",
+                       "Enable SPARC64 HPC-ACE1 (FX10) extensions">;
+def FeatureACE2
+    : SubtargetFeature<"ace2", "IsACE2", "true",
+                       "Enable SPARC64 HPC-ACE2 (FX100) extensions">;
+
 //===----------------------------------------------------------------------===//
 // Register File, Calling Conv, Instruction Descriptions
 //===----------------------------------------------------------------------===//
@@ -59,6 +68,8 @@ include "SparcRegisterInfo.td"
 include "SparcCallingConv.td"
 include "SparcSchedule.td"
 include "SparcInstrInfo.td"
+/*[S64fx]*/
+include "SparcSchedS64fx.td"
 
 def SparcInstrInfo : InstrInfo;
 
@@ -141,6 +152,26 @@ def : Processor<"leon4", LEON4Itineraries,
 // LEON3 + support to CASA + LEON 4 instruction timings
 def : Processor<"gr740", LEON4Itineraries,
                 [ FeatureLeon, LeonCASA ]> {}
+
+// [S64fx] Unusual CPU names are chosen for ease.  "s64fx8" is for
+// SPARC64 VIIIfx, SPARC64 IXfx, and SPARC64 X; "s64fx11" for SPARC64
+// XIfx.  s64fx8 implements JPS1 and HPC-ACE; s64fx11 implements
+// UA2011 and HPC-ACE2.  The features ACE1 and ACE2 are exclusive (to
+// disallow mixed vector lengths).
+
+/*AHO*/
+
+def : Proc<"s64fx8",
+    [FeatureV9, UsePopc, FeatureVIS, FeatureVIS2, FeatureACE1]>;
+
+def : Proc<"s64fx11",
+    [FeatureV9, UsePopc, FeatureVIS, FeatureVIS2, FeatureVIS3, FeatureACE2]>;
+
+//def : ProcessorModel<"s64fx8", S64fxModel,
+//    [FeatureV9, UsePopc, FeatureVIS, FeatureVIS2, FeatureACE1]>;
+
+//def : ProcessorModel<"s64fx11", S64fxModel,
+//    [FeatureV9, UsePopc, FeatureVIS, FeatureVIS2, FeatureVIS3, FeatureACE2]>;
 
 //===----------------------------------------------------------------------===//
 // Declare the target which we are implementing

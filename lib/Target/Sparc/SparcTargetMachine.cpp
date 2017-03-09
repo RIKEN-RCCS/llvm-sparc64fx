@@ -14,6 +14,7 @@
 #include "SparcTargetObjectFile.h"
 #include "Sparc.h"
 #include "LeonPasses.h"
+#include "SparcTargetTransformInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -25,9 +26,14 @@ extern "C" void LLVMInitializeSparcTarget() {
   RegisterTargetMachine<SparcV8TargetMachine> X(TheSparcTarget);
   RegisterTargetMachine<SparcV9TargetMachine> Y(TheSparcV9Target);
   RegisterTargetMachine<SparcelTargetMachine> Z(TheSparcelTarget);
+#if 1 /*[S64fx]*/
+  cl::AddExtraVersionPrinter([]() {
+      printf("  Modified for S64FX\n"); fflush(0);
+    });
+#endif
 }
 
-static std::string computeDataLayout(const Triple &T, bool is64Bit) {
+static std::string computeDataLayout(const Triple &T, bool is64Bit, StringRef CPU) {
   // Sparc is typically big endian, but some are little.
   std::string Ret = T.getArch() == Triple::sparcel ? "e" : "E";
   Ret += "-m:e";
@@ -67,10 +73,12 @@ SparcTargetMachine::SparcTargetMachine(const Target &T, const Triple &TT,
                                        Optional<Reloc::Model> RM,
                                        CodeModel::Model CM,
                                        CodeGenOpt::Level OL, bool is64bit)
-    : LLVMTargetMachine(T, computeDataLayout(TT, is64bit), TT, CPU, FS, Options,
+    : LLVMTargetMachine(T, computeDataLayout(TT, is64bit, CPU), TT, CPU, FS, Options,
                         getEffectiveRelocModel(RM), CM, OL),
       TLOF(make_unique<SparcELFTargetObjectFile>()),
       Subtarget(TT, CPU, FS, *this, is64bit), is64Bit(is64bit) {
+  /*[S64fx]*/
+  llvm::SparcS64fxUsesOldAsm = (Subtarget.isACE());
   initAsmInfo();
 }
 
@@ -127,6 +135,12 @@ public:
 };
 } // namespace
 
+TargetIRAnalysis SparcTargetMachine::getTargetIRAnalysis() {
+  return TargetIRAnalysis([this](const Function &F) {
+      return TargetTransformInfo(SparcTTIImpl(this, F));
+    });
+}
+
 TargetPassConfig *SparcTargetMachine::createPassConfig(PassManagerBase &PM) {
   return new SparcPassConfig(this, PM);
 }
@@ -178,6 +192,10 @@ void SparcPassConfig::addPreEmitPass() {
           .getSubtargetImpl()
           ->insertNOPDoublePrecision()) {
     addPass(new InsertNOPDoublePrecision(getSparcTargetMachine()));
+  }
+  // [S64fx] Add SXAR-prefixing pass (somewhere) after delay-slot filling.
+  if (this->getSparcTargetMachine().getSubtargetImpl()->isACE()) {
+    addPass(createS64fxPrefixPass(this->getSparcTargetMachine()));
   }
 }
 
